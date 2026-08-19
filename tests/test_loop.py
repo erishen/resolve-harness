@@ -152,6 +152,30 @@ class TestLoop:
         names = {t["function"]["name"] for t in tools}
         assert "add" in names
 
+    def test_batched_tool_calls_all_executed(self) -> None:
+        """One assistant message may carry multiple tool_calls; ALL must run
+        (this is what keeps multi-step computation to a single round-trip)."""
+        multi = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "add", "arguments": json.dumps({"a": 23, "b": 45})},
+                },
+                {
+                    "id": "call_2",
+                    "type": "function",
+                    "function": {"name": "add", "arguments": json.dumps({"a": 67, "b": 89})},
+                },
+            ],
+        }
+        router = FakeRouter([multi, answer("done")])
+        final = run_loop(router, max_steps=5)
+        results = [m.content for m in final["messages"] if isinstance(m, ToolMessage)]
+        assert results == ["68", "156"]
+
     def test_tool_messages_carry_tool_call_id(self) -> None:
         """Regression: OpenAI-compatible APIs reject role=tool messages without
         tool_call_id (agnes gateway: json_parse_error). The 2nd LLM call must

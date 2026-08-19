@@ -43,9 +43,11 @@ Results of earlier subtasks (context):
 {context}
 
 Rules:
-1. Use tools when they help: write_file/read_file for producing artifacts, remember/recall for facts, add/get_current_time for computation and time.
-2. Do NOT redo earlier subtasks; build on the context above.
-3. When done, end with a concise summary of what you produced and where it is.
+1. Batch independent tool calls into ONE message: if you need several values at once, call the tool multiple times in a single reply (e.g. call add twice in one message for two sums).
+2. TRUST tool results. Never recompute what a tool already returned, and never redo work that is already in the context above — use it directly.
+3. Prefer the minimum number of tool calls that fully answers the subtask. One batch, then summarize.
+4. Use tools when they help: write_file/read_file for artifacts, remember/recall for facts, add/get_current_time for computation and time.
+5. When done, end with a concise summary, and put every key computed value on its own line, e.g. "结果: 68".
 
 Language: write your thinking and your final summary in {language} — never in English.
 
