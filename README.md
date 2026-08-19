@@ -168,7 +168,7 @@ src/agentpulse/
   tools/           ToolRegistry + 内置工具（含沙箱文件工具 fs.py）
   graph/           AgentState + build_loop（LangGraph 图，支持 emit 事件回调）
 web/               Vite + React + TS 前端（聊天 + 任务工作台，vite proxy /api → :8000）
-examples/          chat.py（REPL）/ tool_demo.py（脚本演示）
+examples/          chat.py（REPL）/ tool_demo.py（脚本演示）/ tasks.md（PSE 演示示例目标）
 tests/             memory / tools / loop / api / tasks 离线测试
 ```
 

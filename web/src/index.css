@@ -369,6 +369,39 @@ body {
   margin-bottom: 8px;
 }
 
+.task-examples {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.ex-label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.ex-chip {
+  background: var(--chip);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ex-chip:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ex-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .task-composer form {
   display: flex;
   gap: 10px;

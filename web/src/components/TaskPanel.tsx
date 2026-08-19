@@ -5,6 +5,16 @@ import type { Subtask, TaskEvent } from '../types'
 
 type RunState = 'idle' | 'running' | 'done' | 'error'
 
+/** One-click demo objectives — see examples/tasks.md for what each showcases. */
+const EXAMPLES: { label: string; text: string }[] = [
+  { label: '计算', text: '计算 12 × 34 是多少' },
+  { label: '多步计算', text: '计算 (23+45) 和 (67+89)，并告诉我哪个结果更大' },
+  { label: '写文档', text: '写一份 150 字左右的 RAG 技术简介，保存为沙箱文件 rag-intro.md' },
+  { label: '小项目', text: '创建一个小型 Python 项目：README.md 写项目说明，hello.py 写一个打印问候的脚本' },
+  { label: '记忆', text: '记住我的偏好：我喜欢用暗色主题；然后告诉我你记住了什么' },
+  { label: '代码+文档', text: '写一个 Python 快速排序函数保存为 quicksort.py，并写 100 字使用说明保存为 quicksort-notes.md' },
+]
+
 /** A display-level item: plan / subtask (with nested events) / verdict / etc. */
 type GroupedItem =
   | { kind: 'goal'; objective: string }
@@ -167,6 +177,21 @@ export default function TaskPanel() {
       <div className="task-composer">
         <div className="task-label">
           任务目标 — Planner 拆解 → Specialist 执行 → Evaluator 验收
+        </div>
+        <div className="task-examples">
+          <span className="ex-label">示例</span>
+          {EXAMPLES.map((ex) => (
+            <button
+              key={ex.label}
+              type="button"
+              className="ex-chip"
+              disabled={busy}
+              title={ex.text}
+              onClick={() => setObjective(ex.text)}
+            >
+              {ex.label}
+            </button>
+          ))}
         </div>
         <form
           onSubmit={(e) => {
