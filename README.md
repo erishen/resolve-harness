@@ -1,0 +1,119 @@
+# agentpulse
+
+一个极简的 Python AI Agent 项目骨架：**LangGraph** 编排循环（Loop）、**LiteLLM** 统一模型路由（Harness）、**分层记忆**（Memory）。用 `uv` 管理依赖与运行环境。
+
+设计目标不是"又一个 agent 框架"，而是把 agent 的三个关键机制**拆开、讲清、可替换**：
+
+| 支柱 | 位置 | 职责 |
+|---|---|---|
+| **Loop** | `src/agentpulse/graph/` | LangGraph StateGraph：`agent → tools → agent…`，带 `max_steps` 防失控 |
+| **Harness** | `src/agentpulse/harness.py` | 唯一入口：组装配置、模型路由、工具注册表、记忆、循环 |
+| **Memory** | `src/agentpulse/memory/` | 短期（会话转录）+ 长期（SQLite 事实，经工具读写） |
+
+## 快速开始
+
+```bash
+cd work/harness/agentpulse
+cp .env.example .env          # 填 LLM_MODEL / LLM_API_KEY
+uv sync                        # 安装依赖（国内自动走清华镜像）
+uv run agentpulse-chat         # 交互式对话
+```
+
+不带真实 key 也能跑通全链路：`uv run pytest` 用 FakeRouter 驱动循环，不碰网络。
+
+```bash
+uv run pytest                 # 离线单元测试（memory / tools / loop）
+uv run python examples/tool_demo.py   # 脚本演示：时间/计算/记忆
+```
+
+## 架构
+
+```
+┌────────────────────────────── Harness ──────────────────────────────┐
+│                                                                     │
+│  Settings  ──►  LiteLLMRouter  ──►  任意 provider / 兼容端点         │
+│  (.env)                                                             │
+│                                                                     │
+│  ShortTermMemory  ◄──  Loop (LangGraph StateGraph)  ──►  ToolRegistry│
+│  (会话转录, 有界)      │ agent ──► tools ──► agent ──► END            │  (内置 + 自定义)
+│                       │ max_steps 硬上限                            │
+│  LongTermMemory  ◄────────────────────────────────────────┘         │
+│  (SQLite 事实, 跨会话)     ↑ remember / recall / list_memories 工具   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+一次 `harness.run(text)` 的旅程：
+
+1. 用户消息进入 `ShortTermMemory`，连同历史转录一起作为初始 state；
+2. `agent` 节点：system prompt + 历史 + 工具 schema → LiteLLM → 可能返回 `tool_calls`；
+3. 有 `tool_calls` 且 `step < max_steps` → 路由到 `tools` 节点执行，结果作为 `ToolMessage` 回注；
+4. 回到 `agent` 继续推理；无工具调用或触达上限 → 终止；
+5. 最终回复写回短期记忆；agent 通过 `remember` 写入的事实进入长期记忆。
+
+## 三个设计
+
+### Loop（`graph/loop.py`）
+
+- 纯手写 StateGraph，不用 prebuilt `ToolNode`——循环的每个决策点都可见、可改；
+- `AgentState` 用 LangGraph 的 `add_messages` reducer 做消息累积与工具结果配对；
+- 路由函数 `should_continue` 是唯一的"继续/停止"决策点：`has_tool_calls && step < max_steps → tools`，否则 `END`；
+- `max_steps` 是硬上限，模型一直调工具也不会死循环（日志会告警）。
+
+### Harness（`harness.py`）
+
+- 一个类组装所有依赖，`run()` / `ask()` 是唯一入口，`__enter__/__exit__` 自动释放 SQLite 连接；
+- 模型路由全部走 LiteLLM：换模型只改 `LLM_MODEL` 一个字符串，OpenAI/Anthropic/DeepSeek/任意兼容端点通用；
+- 工具注册表是"唯一执行通道"：`@h.register_tool` 注册，schema 自动从函数签名推导，工具执行错误会以文本回注给模型重试。
+
+### Memory（`memory/`）
+
+- **短期**：有界 FIFO 会话转录（默认 40 条），`as_list()` 输出纯净 `{role, content}` 序列，超限裁剪最旧；
+- **长期**：SQLite 键值事实（stdlib `sqlite3`，零依赖），支持 scope 分区（按用户/会话隔离），`remember/recall/search/forget`；
+- 长期记忆通过内置工具暴露给 agent：`remember`（存事实）、`recall`（取事实）、`list_memories`（看键），从而 agent 自己就能"记住"跨会话信息。
+
+## 扩展：注册自己的工具
+
+```python
+from agentpulse import Harness
+
+h = Harness()
+
+@h.register_tool(description="Fetch a URL and return the text content")
+def fetch(url: str) -> str:
+    ...  # 你的实现
+
+print(h.run("帮我抓一下 https://example.com 的标题"))
+```
+
+工具参数 schema 自动从类型注解推导（`str/int/float/bool` + 必填判断）；需要更细控制时传 `parameters=` 给注册器。
+
+## 配置
+
+全部通过环境变量 / `.env`（见 `.env.example`）：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `LLM_MODEL` | `openai/gpt-4o-mini` | LiteLLM 模型串 |
+| `LLM_API_BASE` | 空 | OpenAI 兼容端点（网关 / vLLM / Ollama） |
+| `LLM_API_KEY` | 空 | 也可直接用各 provider 的 `*_API_KEY` |
+| `LLM_TEMPERATURE` / `LLM_MAX_TOKENS` | `0.7` / `2048` | 采样参数 |
+| `LLM_MAX_STEPS` | `10` | 循环上限 |
+| `HARNESS_VERBOSE` | `0` | `1` 时打印每一步的工具调用 |
+
+## 项目结构
+
+```
+src/agentpulse/
+  config.py        Settings（.env → dataclass）
+  llm.py           LiteLLMRouter（统一路由 + 重试 + tool_calls 解析）
+  harness.py       Harness（对外 API）
+  memory/          短期 + 长期记忆
+  tools/           ToolRegistry + 内置工具
+  graph/           AgentState + build_loop（LangGraph 图）
+examples/          chat.py（REPL）/ tool_demo.py（脚本演示）
+tests/             memory / tools / loop 离线测试
+```
+
+## 许可证
+
+MIT
