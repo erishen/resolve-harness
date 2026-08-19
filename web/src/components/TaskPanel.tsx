@@ -1,26 +1,117 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { marked } from 'marked'
 import { api } from '../api'
-import type { TaskEvent } from '../types'
+import type { Subtask, TaskEvent } from '../types'
 
 type RunState = 'idle' | 'running' | 'done' | 'error'
+
+/** A display-level item: plan / subtask (with nested events) / verdict / etc. */
+type GroupedItem =
+  | { kind: 'goal'; objective: string }
+  | { kind: 'plan'; round: number; subtasks: Subtask[] }
+  | { kind: 'subtask'; index: number; title: string; total: number; events: TaskEvent[] }
+  | { kind: 'subtask-done'; index: number; title: string; summary: string }
+  | { kind: 'event'; event: TaskEvent }
+  | {
+      kind: 'evaluation'
+      passed: boolean
+      score: number
+      feedback: string
+      missing: string[]
+      round: number
+    }
+  | { kind: 'replan'; feedback: string; round: number }
+  | { kind: 'final'; reply: string; passed: boolean; score: number; rounds: number }
+  | { kind: 'error'; message: string }
+
+function groupEvents(events: TaskEvent[]): GroupedItem[] {
+  const out: GroupedItem[] = []
+  let current: { index: number; title: string; total: number; events: TaskEvent[] } | null = null
+
+  for (const ev of events) {
+    const d = ev.data
+    switch (ev.type) {
+      case 'task_start':
+        out.push({ kind: 'goal', objective: String(d.objective ?? '') })
+        break
+      case 'plan':
+        out.push({ kind: 'plan', round: Number(d.round ?? 0), subtasks: (d.subtasks ?? []) as Subtask[] })
+        break
+      case 'subtask_start':
+        current = {
+          index: Number(d.index ?? 0),
+          title: String(d.title ?? ''),
+          total: Number(d.total ?? 0),
+          events: [],
+        }
+        out.push({ kind: 'subtask', ...current })
+        break
+      case 'subtask_done':
+        out.push({
+          kind: 'subtask-done',
+          index: Number(d.index ?? 0),
+          title: String(d.title ?? ''),
+          summary: String(d.summary ?? ''),
+        })
+        current = null
+        break
+      case 'thought':
+      case 'tool_call':
+      case 'tool_result':
+        if (d.subtask != null && current) {
+          current.events.push(ev)
+        } else {
+          out.push({ kind: 'event', event: ev })
+        }
+        break
+      case 'evaluation':
+        out.push({
+          kind: 'evaluation',
+          passed: Boolean(d.passed),
+          score: Number(d.score ?? 0),
+          feedback: String(d.feedback ?? ''),
+          missing: (d.missing ?? []) as string[],
+          round: Number(d.round ?? 0),
+        })
+        break
+      case 're_plan':
+        out.push({ kind: 'replan', feedback: String(d.feedback ?? ''), round: Number(d.round ?? 0) })
+        break
+      case 'task_end':
+        out.push({
+          kind: 'final',
+          reply: String(d.reply ?? ''),
+          passed: Boolean(d.passed),
+          score: Number(d.score ?? 0),
+          rounds: Number(d.rounds ?? 1),
+        })
+        break
+      case 'error':
+        out.push({ kind: 'error', message: String(d.message ?? 'unknown error') })
+        break
+    }
+  }
+  return out
+}
 
 export default function TaskPanel() {
   const [objective, setObjective] = useState('')
   const [events, setEvents] = useState<TaskEvent[]>([])
   const [state, setState] = useState<RunState>('idle')
   const [error, setError] = useState('')
-  const [steps, setSteps] = useState(0)
   const [model, setModel] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
+
+  const items = groupEvents(events)
+  const toolCalls = events.filter((e) => e.type === 'tool_call').length
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [events, state])
 
   useEffect(() => {
-    return () => esRef.current?.close() // cleanup on unmount
+    return () => esRef.current?.close()
   }, [])
 
   const runTask = async () => {
@@ -28,7 +119,6 @@ export default function TaskPanel() {
     if (!goal || state === 'running') return
     setError('')
     setEvents([])
-    setSteps(0)
     setState('running')
     try {
       const { task_id } = await api.createTask(goal)
@@ -43,7 +133,6 @@ export default function TaskPanel() {
         }
         setEvents((prev) => [...prev, ev])
         if (ev.type === 'task_start') setModel(String(ev.data.model ?? ''))
-        if (ev.type === 'tool_call') setSteps((s) => s + 1)
         if (ev.type === 'task_end') {
           setState('done')
           es.close()
@@ -57,9 +146,7 @@ export default function TaskPanel() {
         }
       }
       es.onerror = () => {
-        // server closes the stream after task_end/error; nothing to do here —
-        // state is driven by the terminal events above. EventSource auto-retries
-        // otherwise, which is fine for a local tool.
+        /* server closes stream after terminal events; state driven by events */
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -78,7 +165,9 @@ export default function TaskPanel() {
   return (
     <div className="task-panel">
       <div className="task-composer">
-        <div className="task-label">任务目标（agent 自主规划 → 执行 → 交付）</div>
+        <div className="task-label">
+          任务目标 — Planner 拆解 → Specialist 执行 → Evaluator 验收
+        </div>
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -88,7 +177,7 @@ export default function TaskPanel() {
           <input
             value={objective}
             onChange={(e) => setObjective(e.target.value)}
-            placeholder="例：写一份 RAG 技术简介并存到沙箱文件，300 字左右"
+            placeholder="例：调研 RAG 的常见方案并写一份对比报告存入沙箱"
             disabled={busy}
           />
           {busy ? (
@@ -106,23 +195,24 @@ export default function TaskPanel() {
       {error && <div className="error-banner">{error}</div>}
 
       <div className="task-stream">
-        {events.length === 0 && state === 'idle' && (
+        {items.length === 0 && state === 'idle' && (
           <div className="empty">
-            输入一个目标，agent 会自己规划步骤、调用工具、迭代直到完成 ——
-            每一步（思考 / 工具调用 / 结果 / 最终交付）都会实时显示在这里
+            输入一个目标。任务会由多个 Agent 协作完成：Planner 拆解子任务、
+            Specialist 逐个执行（可调工具）、Evaluator 验收不达标自动打回重规划 ——
+            全过程实时显示
           </div>
         )}
-        {events.map((ev, i) => (
-          <StepCard key={i} event={ev} />
+        {items.map((item, i) => (
+          <GroupedCard key={i} item={item} />
         ))}
         {state === 'running' && (
           <div className="task-running">
-            <span className="spinner" /> agent 正在执行…
+            <span className="spinner" /> agent 协作执行中…
           </div>
         )}
         {state === 'done' && (
           <div className="task-done-banner">
-            ✅ 任务完成 · 共 {steps} 次工具调用{model ? ` · ${model}` : ''}
+            ✅ 任务完成 · {toolCalls} 次工具调用{model ? ` · ${model}` : ''}
           </div>
         )}
         {state === 'error' && <div className="task-done-banner err">✕ 任务失败</div>}
@@ -132,50 +222,93 @@ export default function TaskPanel() {
   )
 }
 
-function StepCard({ event }: { event: TaskEvent }) {
-  const { type, data } = event
-  switch (type) {
-    case 'task_start':
+// ---- grouped card rendering ----------------------------------------------------
+
+function GroupedCard({ item }: { item: GroupedItem }) {
+  switch (item.kind) {
+    case 'goal':
       return (
         <div className="step step-start">
           <div className="step-title">🎯 目标</div>
-          <div className="step-body">{String(data.objective ?? '')}</div>
+          <div className="step-body">{item.objective}</div>
         </div>
       )
-    case 'thought':
+    case 'plan':
       return (
-        <div className="step step-thought">
+        <div className="step step-plan">
           <div className="step-title">
-            💭 思考{typeof data.step === 'number' ? ` · 第 ${data.step} 轮` : ''}
+            📋 计划{item.round > 0 ? `（第 ${item.round + 1} 轮修订）` : ''}
           </div>
-          <div className="step-body">{String(data.content ?? '')}</div>
+          <div className="plan-list">
+            {item.subtasks.map((st, i) => (
+              <div key={i} className="plan-item">
+                <span className="plan-idx">{st.index + 1}</span>
+                <div>
+                  <div className="plan-title">{st.title}</div>
+                  {st.artifacts.length > 0 && (
+                    <div className="plan-artifacts">{st.artifacts.join(' · ')}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )
-    case 'tool_call':
+    case 'subtask':
       return (
-        <div className="step step-toolcall">
+        <div className="step step-subtask">
           <div className="step-title">
-            ⚙️ 调用工具 <code>{String(data.name ?? '')}</code>
+            🔧 子任务 {item.index + 1}/{item.total}：{item.title}（执行中）
           </div>
-          {data.args && Object.keys(data.args).length > 0 && (
-            <pre className="step-args">{JSON.stringify(data.args, null, 2)}</pre>
+          <div className="subtask-events">
+            {item.events.map((ev, i) => (
+              <InlineEvent key={i} event={ev} />
+            ))}
+          </div>
+        </div>
+      )
+    case 'subtask-done':
+      return (
+        <div className="step step-subtask-done">
+          <div className="step-title">✅ 子任务完成：{item.title}</div>
+          {item.summary && <div className="step-body">{item.summary}</div>}
+        </div>
+      )
+    case 'event':
+      return <InlineEvent event={item.event} standalone />
+    case 'evaluation':
+      return (
+        <div className={`step step-evaluation ${item.passed ? 'ok' : 'fail'}`}>
+          <div className="step-title">
+            📊 验收{item.round > 0 ? `（第 ${item.round + 1} 轮）` : ''} ·{' '}
+            {item.passed ? `通过（${item.score} 分）` : `未通过（${item.score} 分）`}
+          </div>
+          {item.feedback && <div className="step-body">{item.feedback}</div>}
+          {item.missing.length > 0 && (
+            <div className="missing-list">
+              {item.missing.map((m, i) => (
+                <div key={i}>• {m}</div>
+              ))}
+            </div>
           )}
         </div>
       )
-    case 'tool_result':
+    case 'replan':
       return (
-        <div className="step step-toolresult">
-          <div className="step-title">📥 工具结果</div>
-          <div className="step-body">{String(data.content ?? '')}</div>
+        <div className="step step-replan">
+          <div className="step-title">🔄 打回重规划</div>
+          <div className="step-body">{item.feedback}</div>
         </div>
       )
-    case 'task_end':
+    case 'final':
       return (
         <div className="step step-final">
-          <div className="step-title">📦 交付</div>
+          <div className="step-title">
+            📦 交付{item.passed ? ` · ${item.score} 分 · ${item.rounds} 轮完成` : '（未完全达标）'}
+          </div>
           <div
             className="step-markdown"
-            dangerouslySetInnerHTML={{ __html: marked.parse(String(data.reply ?? '')) }}
+            dangerouslySetInnerHTML={{ __html: marked.parse(item.reply) }}
           />
         </div>
       )
@@ -183,10 +316,38 @@ function StepCard({ event }: { event: TaskEvent }) {
       return (
         <div className="step step-error">
           <div className="step-title">✕ 出错</div>
-          <div className="step-body">{String(data.message ?? 'unknown error')}</div>
+          <div className="step-body">{item.message}</div>
         </div>
       )
-    default:
-      return null
   }
+}
+
+function InlineEvent({ event, standalone }: { event: TaskEvent; standalone?: boolean }) {
+  const d = event.data
+  if (event.type === 'thought') {
+    return (
+      <div className={`inline-event inline-thought${standalone ? ' standalone' : ''}`}>
+        <span className="ie-badge">💭 思考</span> {String(d.content ?? '')}
+      </div>
+    )
+  }
+  if (event.type === 'tool_call') {
+    return (
+      <div className="inline-event inline-call">
+        <span className="ie-badge">⚙️ {String(d.name ?? '')}</span>
+        {d.args && Object.keys(d.args).length > 0 && (
+          <span className="ie-args">{JSON.stringify(d.args)}</span>
+        )}
+      </div>
+    )
+  }
+  if (event.type === 'tool_result') {
+    return (
+      <div className="inline-event inline-result">
+        <span className="ie-badge">📥 {String(d.name ?? '')}</span>
+        <span className="ie-res">{String(d.content ?? '')}</span>
+      </div>
+    )
+  }
+  return null
 }

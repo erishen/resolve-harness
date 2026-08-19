@@ -41,11 +41,23 @@ export interface StateResponse {
 
 export type TaskEventType =
   | 'task_start'
+  | 'plan'
+  | 'subtask_start'
   | 'thought'
   | 'tool_call'
   | 'tool_result'
+  | 'subtask_done'
+  | 'evaluation'
+  | 're_plan'
   | 'task_end'
   | 'error'
+
+export interface Subtask {
+  index: number
+  title: string
+  instruction: string
+  artifacts: string[]
+}
 
 export interface TaskEvent {
   task_id: string
@@ -55,10 +67,21 @@ export interface TaskEvent {
     model?: string
     content?: string
     step?: number
+    subtask?: number
+    subtasks?: Subtask[]
+    round?: number
+    index?: number
+    title?: string
+    total?: number
+    summary?: string
     name?: string
     args?: Record<string, unknown>
     reply?: string
     steps?: number
+    passed?: boolean
+    score?: number
+    feedback?: string
+    missing?: string[]
     message?: string
     [k: string]: unknown
   }

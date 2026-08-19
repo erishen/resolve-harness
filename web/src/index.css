@@ -507,6 +507,146 @@ body {
   background: rgba(248, 113, 113, 0.06);
 }
 
+/* ---- multi-agent task tree ---- */
+.step-plan {
+  border-left: 3px solid var(--accent);
+}
+
+.plan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.plan-idx {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--chip);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.plan-title {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.plan-artifacts {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.step-subtask {
+  border-left: 3px solid #38bdf8;
+  background: var(--panel);
+}
+
+.step-subtask-done {
+  border-left: 3px solid var(--ok);
+  background: var(--panel);
+}
+
+.subtask-events {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
+
+.inline-event {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.inline-event.standalone {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--panel-2);
+}
+
+.ie-badge {
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--accent);
+  font-size: 11px;
+  background: var(--chip);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.inline-thought .ie-badge {
+  color: var(--accent-2);
+}
+
+.inline-call .ie-badge {
+  color: #fbbf24;
+}
+
+.inline-result .ie-badge {
+  color: var(--ok);
+}
+
+.ie-args,
+.ie-res {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ie-res {
+  color: var(--text-dim);
+}
+
+.step-evaluation {
+  border-left: 3px solid #fbbf24;
+}
+
+.step-evaluation.ok {
+  border-left-color: var(--ok);
+  background: rgba(74, 222, 128, 0.05);
+}
+
+.step-evaluation.fail {
+  border-left-color: var(--err);
+  background: rgba(248, 113, 113, 0.05);
+}
+
+.missing-list {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--err);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.step-replan {
+  border-left: 3px solid #fbbf24;
+  background: rgba(251, 191, 36, 0.06);
+}
+
 .step-markdown {
   font-size: 13px;
   line-height: 1.7;

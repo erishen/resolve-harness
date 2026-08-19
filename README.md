@@ -50,7 +50,7 @@ make web-dev
 打开 http://localhost:5173 即可使用。界面有**两个模式**：
 
 - **聊天**：一问一答，工具调用以回复下方的小标签展示；
-- **任务**（任务工作台）：输入一个目标（如「写一份 RAG 技术简介并存到沙箱文件」），agent 自主规划 → 调用工具 → 迭代，每一步（思考 / 工具调用 / 参数 / 结果 / 最终交付）通过 SSE **实时流式**显示在流水线上，交付内容支持 markdown。
+- **任务**（多 Agent 工作台）：输入一个目标，**Planner 拆解子任务 → Specialist 逐个执行（工具循环）→ Evaluator 验收**，不达标自动打回重规划（最多 1 轮）→ Reporter 汇成交付。每一步（计划 / 子任务进度 / 思考 / 工具调用 / 验收结论）通过 SSE 实时流式显示为任务树，交付支持 markdown。
 
 右侧栏实时列出长期记忆（可删除），顶部「清空会话」重置短期记忆。Vite dev 已配置 `/api` 代理到后端，无需处理 CORS。
 
@@ -94,10 +94,19 @@ make web-dev
 - 模型路由全部走 LiteLLM：换模型只改 `LLM_MODEL` 一个字符串，OpenAI/Anthropic/DeepSeek/任意兼容端点通用；
 - 工具注册表是"唯一执行通道"：`@h.register_tool` 注册，schema 自动从函数签名推导，工具执行错误会以文本回注给模型重试。
 
-### Tasks（`tasks.py`）
+### Tasks（`tasks.py` + `roles.py`）— 多 Agent 编排
 
-- `TaskRunner.start(objective)` 把目标丢进后台线程跑同一个 loop（任务专用 system prompt：先规划 → 用工具 → 交付）；
-- 每个 inner step 事件（`task_start / thought / tool_call / tool_result / task_end`）实时进入队列，`/api/tasks/{id}/stream` 以 SSE 推给前端；
+```
+Planner(拆解目标为 JSON 子任务计划)
+   → Specialist × N(每个子任务跑一个工具循环,复用 build_loop)
+   → Evaluator(严格验收:passed/score/feedback/missing)
+   → 通过 → Reporter(汇成交付 markdown) → task_end
+   → 未通过 → re_plan(带反馈重规划,最多 1 轮) → 重新执行
+```
+
+- 三个角色都是独立 LLM 调用，输出结构化 JSON（容错解析：剥 markdown fence、容忍尾逗号、失败重试）；
+- Specialist 复用同一个 LangGraph loop，system prompt 换成子任务指令 + 前序子任务结果上下文；
+- 每个 inner step 事件（`task_start / plan / subtask_start / thought / tool_call / tool_result / subtask_done / evaluation / re_plan / task_end`）实时进入队列，`/api/tasks/{id}/stream` 以 SSE 推给前端，事件带 `subtask` 标签便于前端渲染任务树；
 - 任务记录保留全部事件，晚订阅者也能拿到完整历史；`max_steps` 兜底防止失控。
 
 ### Memory（`memory/`）
@@ -152,7 +161,8 @@ src/agentpulse/
   config.py        Settings（.env → dataclass）
   llm.py           LiteLLMRouter（统一路由 + 重试 + tool_calls 解析）
   harness.py       Harness（对外 API + last_trace 工具调用追踪）
-  tasks.py         TaskRunner：任务模式，后台线程跑 loop + 事件流（SSE）
+  tasks.py         TaskRunner：多 Agent 编排（Planner/Specialist/Evaluator/Reporter）
+  roles.py         Planner + Evaluator 角色（结构化 JSON 输出 + 容错解析）
   api.py           FastAPI 层（/api/chat、/api/memories、/api/tasks + SSE）
   memory/          短期 + 长期记忆（长期 SQLite 线程安全）
   tools/           ToolRegistry + 内置工具（含沙箱文件工具 fs.py）

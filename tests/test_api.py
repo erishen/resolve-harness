@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from agentpulse.api import create_app
 from agentpulse.memory import LongTermMemory
+from agentpulse.tools.registry import ToolRegistry
 
 
 class FakeHarness:
@@ -17,6 +18,13 @@ class FakeHarness:
 
     def __init__(self) -> None:
         self.settings = SimpleNamespace(model="fake-model", max_steps=5, verbose=False)
+        # TaskRunner is constructed by create_app even if unused by these tests;
+        # give it duck-typed stand-ins.
+        self.router = SimpleNamespace(
+            complete=lambda *a, **k: {"role": "assistant", "content": ""},
+            parse_tool_calls=lambda m: [],
+        )
+        self.tools = ToolRegistry()
         self.last_steps = 0
         self.last_trace: list[dict] = []
         self._transcript: list[dict] = []
