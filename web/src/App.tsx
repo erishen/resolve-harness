@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, formatValue } from './api'
 import ChatPanel from './components/ChatPanel'
+import PluginPanel from './components/PluginPanel'
 import TaskPanel from './components/TaskPanel'
 import type { MemoryRow } from './types'
 
-type Mode = 'chat' | 'task'
+type Mode = 'chat' | 'task' | 'plugins'
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('chat')
@@ -78,14 +79,22 @@ export default function App() {
             >
               任务
             </button>
+            <button
+              className={mode === 'plugins' ? 'active' : ''}
+              onClick={() => setMode('plugins')}
+            >
+              插件
+            </button>
           </nav>
           {model && <span className="model-tag">{model}</span>}
         </header>
 
         {mode === 'chat' ? (
           <ChatPanel onAfterTurn={() => void loadMemories()} />
-        ) : (
+        ) : mode === 'task' ? (
           <TaskPanel />
+        ) : (
+          <PluginPanel />
         )}
       </section>
 

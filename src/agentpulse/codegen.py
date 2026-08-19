@@ -400,3 +400,152 @@ def codegen_solve(
             return answer
         last_error = "上一版代码校验未通过或未命中"
     return None
+
+
+# -- plugin management (list / delete / promote to source) ------------------------
+
+
+def _plugin_dir(plugin_dir: str | Path | None) -> Path:
+    return Path(plugin_dir) if plugin_dir else default_plugin_dir()
+
+
+def _plugin_filename(name: str) -> str:
+    """Only allow names of the form gen_<sha10> — no path traversal."""
+    if not re.fullmatch(r"gen_[0-9a-f]{10}", name):
+        raise CodeGenError(f"invalid plugin name: {name!r}")
+    return f"{name}.py"
+
+
+def list_plugins(plugin_dir: str | Path | None = None) -> list[dict[str, Any]]:
+    """List persisted plugins with metadata + source (for the management UI)."""
+    directory = _plugin_dir(plugin_dir)
+    if not directory.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    for py in sorted(directory.glob("gen_*.py")):
+        source = py.read_text(encoding="utf-8")
+        trigger = ""
+        m = re.search(r"^# trigger: (.*)$", source, re.MULTILINE)
+        if m:
+            trigger = m.group(1).strip()
+        try:
+            s = py.stat()
+        except OSError:
+            continue
+        out.append(
+            {
+                "name": py.stem,
+                "trigger": trigger,
+                "source": source,
+                "mtime": s.st_mtime,
+                "size": s.st_size,
+            }
+        )
+    return out
+
+
+def delete_plugin(name: str, plugin_dir: str | Path | None = None) -> bool:
+    """Delete one persisted plugin file by name. Returns False if absent."""
+    directory = _plugin_dir(plugin_dir)
+    try:
+        target = directory / _plugin_filename(name)
+    except CodeGenError:
+        return False
+    if not target.exists():
+        return False
+    target.unlink()
+    return True
+
+
+# target file that promoted detectors are merged into (relative to package root)
+def default_promote_target() -> Path:
+    here = Path(__file__).resolve()
+    return here.parent / "generated_detectors.py"
+
+
+_GENERATED_HEADER = '''"""晋升的 fast-path 检测器（插件整理生成；函数体可自由修改，整体结构勿手改）。
+
+由管理界面从 data/fastpath_plugins/ 选中合并生成。每个函数对应一个曾在
+运行时生成过的确定性模式，晋升后成为内置检测器，随源码一起提交。
+"""
+
+from typing import Callable
+
+
+'''
+
+
+def promote_plugins(
+    names: list[str],
+    *,
+    plugin_dir: str | Path | None = None,
+    target_path: str | Path | None = None,
+) -> int:
+    """Merge selected plugins into `generated_detectors.py` and remove their
+    runtime files.
+
+    Each plugin becomes `detect_promoted_<n>` with its trigger query kept as a
+    docstring, all collected in a module-level `DETECTORS` list. Returns the
+    number of detectors promoted.
+    """
+    directory = _plugin_dir(plugin_dir)
+    sources: list[tuple[str, str]] = []  # (trigger, source)
+    for name in names:
+        try:
+            target = directory / _plugin_filename(name)
+        except CodeGenError:
+            continue
+        if not target.exists():
+            continue
+        source = target.read_text(encoding="utf-8")
+        # must still be safe before it becomes permanent source
+        try:
+            tree = ast.parse(source, mode="exec")
+            validate_ast(tree)
+        except (SyntaxError, CodeGenError):
+            continue
+        trigger = ""
+        m = re.search(r"^# trigger: (.*)$", source, re.MULTILINE)
+        if m:
+            trigger = m.group(1).strip()
+        sources.append((trigger, source))
+
+    if not sources:
+        raise CodeGenError("no valid plugins selected to promote")
+
+    parts: list[str] = [_GENERATED_HEADER]
+    func_names: list[str] = []
+    for i, (trigger, source) in enumerate(sources, 1):
+        func_name = f"detect_promoted_{i}"
+        # strip the trigger comment line and rename the function
+        body = re.sub(r"^# trigger: .*$", "", source, flags=re.MULTILINE)
+        body = re.sub(
+            r"^def\s+detect\b",
+            f"def {func_name}",
+            body,
+            count=1,
+            flags=re.MULTILINE,
+        ).strip("\n")
+        # insert trigger docstring as the first line of the function body
+        doc = f'    """trigger: {trigger}"""' if trigger else f'    """promoted detector"""'
+        def_line_end = body.find("\n")
+        if def_line_end != -1:
+            body = body[: def_line_end + 1] + doc + "\n" + body[def_line_end + 1 :]
+        else:
+            body += "\n" + doc
+        parts.append(body + "\n\n\n")
+        func_names.append(func_name)
+
+    parts.append(f"DETECTORS: list[Callable[[str], str | None]] = [{', '.join(func_names)}]\n")
+    target = Path(target_path) if target_path else default_promote_target()
+    target.write_text("".join(parts), encoding="utf-8")
+
+    # runtime copies are now redundant — remove them
+    removed = 0
+    for name in names:
+        try:
+            if delete_plugin(name, directory):
+                removed += 1
+        except CodeGenError:
+            pass
+    return len(func_names)

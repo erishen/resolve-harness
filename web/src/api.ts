@@ -2,6 +2,7 @@ import type {
   ChatMessage,
   ChatResponse,
   MemoryRow,
+  PluginItem,
   StateResponse,
   TaskSnapshot,
   TranscriptItem,
@@ -39,6 +40,16 @@ export const api = {
     }),
   getTask: (taskId: string) => request<TaskSnapshot>(`/tasks/${taskId}`),
   listTasks: () => request<{ tasks: TaskSnapshot[] }>('/tasks'),
+  plugins: () => request<{ plugins: PluginItem[] }>('/plugins'),
+  deletePlugin: (name: string) =>
+    request<{ ok: boolean }>(`/plugins/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    }),
+  promotePlugins: (names: string[]) =>
+    request<{ ok: boolean; promoted: number; file: string }>('/plugins/promote', {
+      method: 'POST',
+      body: JSON.stringify({ names }),
+    }),
 }
 
 // transcript items -> ChatMessage (group consecutive tool traces into the reply)

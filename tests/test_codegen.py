@@ -3,6 +3,7 @@ and end-to-end "generate once, reuse forever" in the task runner."""
 
 from __future__ import annotations
 
+import ast
 import queue
 import time
 from typing import Any
@@ -12,10 +13,14 @@ import pytest
 from agentpulse.codegen import (
     CodeGenError,
     codegen_solve,
+    delete_plugin,
     extract_code,
+    list_plugins,
     load_plugins,
+    promote_plugins,
     run_detector,
     save_plugin,
+    validate_ast,
 )
 from agentpulse.fastpath import try_fast_answer
 from agentpulse.harness import Harness
@@ -140,6 +145,58 @@ class TestPersistence:
         third = load_plugins(tmp_path)
         assert len(third) == 2
         assert sorted(d("x") for d in third) == ["a", "b"]
+
+
+class TestPluginManagement:
+    def _make_plugins(self, tmp_path) -> list[str]:
+        names = []
+        names.append(save_plugin("def detect(t):\n    if '阶乘' in t:\n        return 'factorial'\n    return None", tmp_path, trigger="计算 7 的阶乘"))
+        names.append(save_plugin("def detect(t):\n    if '倒过来' in t:\n        return 'reversed'\n    return None", tmp_path, trigger="把 12345 倒过来写"))
+        return names
+
+    def test_list_plugins_metadata(self, tmp_path) -> None:
+        names = self._make_plugins(tmp_path)
+        plugins = list_plugins(tmp_path)
+        assert len(plugins) == 2
+        by_name = {p["name"]: p for p in plugins}
+        assert names[0] in by_name
+        assert by_name[names[0]]["trigger"] == "计算 7 的阶乘"
+        assert "def detect" in by_name[names[0]]["source"]
+
+    def test_delete_plugin(self, tmp_path) -> None:
+        names = self._make_plugins(tmp_path)
+        assert delete_plugin(names[0], tmp_path) is True
+        assert delete_plugin(names[0], tmp_path) is False  # already gone
+        assert len(list_plugins(tmp_path)) == 1
+
+    def test_delete_rejects_bad_name(self, tmp_path) -> None:
+        assert delete_plugin("../../etc/passwd", tmp_path) is False
+
+    def test_promote_merges_into_one_file(self, tmp_path) -> None:
+        names = self._make_plugins(tmp_path)
+        target = tmp_path / "generated_detectors.py"
+        promoted = promote_plugins(names, plugin_dir=str(tmp_path), target_path=str(target))
+        assert promoted == 2
+
+        content = target.read_text(encoding="utf-8")
+        # both functions renamed and listed in ONE file
+        assert "def detect_promoted_1(" in content
+        assert "def detect_promoted_2(" in content
+        assert '"""trigger: 计算 7 的阶乘"""' in content
+        assert '"""trigger: 把 12345 倒过来写"""' in content
+        assert "DETECTORS: list[Callable[[str], str | None]] = [detect_promoted_1, detect_promoted_2]" in content
+        # trigger comment lines removed from bodies
+        assert "# trigger:" not in content
+
+        # generated file is itself valid Python (it has its own header with
+        # `from typing import Callable`, which is not LLM-generated code)
+        compile(ast.parse(content, mode="exec"), "<generated>", "exec")
+        # runtime copies removed after promotion
+        assert list_plugins(tmp_path) == []
+
+    def test_promote_empty_selection_raises(self, tmp_path) -> None:
+        with pytest.raises(CodeGenError):
+            promote_plugins(["gen_0000000000"], plugin_dir=str(tmp_path), target_path=str(tmp_path / "x.py"))
 
 
 class TestCodegenSolve:

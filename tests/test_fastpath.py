@@ -10,10 +10,12 @@ from agentpulse.fastpath import try_fast_answer
 @pytest.fixture(autouse=True)
 def _isolate_plugins(tmp_path, monkeypatch):
     """Point the plugin dir at a temp (empty) folder so real runtime-generated
-    plugins (e.g. the reversal detector) can't leak into these unit tests."""
-    from agentpulse import codegen
+    plugins can't leak into these unit tests, and drop promoted source
+    detectors too (they may grow to match arbitrary inputs)."""
+    from agentpulse import codegen, fastpath
 
     monkeypatch.setattr(codegen, "default_plugin_dir", lambda: tmp_path / "empty-plugins")
+    monkeypatch.setattr(fastpath, "_GENERATED_DETECTORS", [])
 
 
 class TestArithmetic:

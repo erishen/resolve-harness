@@ -58,6 +58,10 @@ class TaskCreate(BaseModel):
     objective: str = Field(min_length=1, max_length=20000)
 
 
+class PluginPromote(BaseModel):
+    names: list[str] = []
+
+
 def create_app(
     harness: Harness | None = None,
     runner: TaskRunner | None = None,
@@ -182,7 +186,31 @@ def create_app(
             },
         )
 
+    _register_plugin_routes(app)
     return app
+
+
+# -- plugin management (wired into the app factory) -------------------------------
+
+
+def _register_plugin_routes(app: FastAPI) -> None:
+    from .codegen import CodeGenError, delete_plugin, list_plugins, promote_plugins
+
+    @app.get("/api/plugins")
+    def plugins_list() -> dict[str, Any]:
+        return {"plugins": list_plugins()}
+
+    @app.delete("/api/plugins/{name}")
+    def plugin_delete(name: str) -> dict[str, bool]:
+        return {"ok": delete_plugin(name)}
+
+    @app.post("/api/plugins/promote")
+    def plugin_promote(req: PluginPromote) -> dict[str, Any]:
+        try:
+            promoted = promote_plugins(req.names)
+        except CodeGenError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "promoted": promoted, "file": "src/agentpulse/generated_detectors.py"}
 
 
 app = create_app()

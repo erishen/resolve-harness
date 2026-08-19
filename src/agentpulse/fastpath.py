@@ -18,6 +18,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .generated_detectors import DETECTORS as _GENERATED_DETECTORS
+
 # -- safe arithmetic -----------------------------------------------------------
 
 _BIN_OPS = {
@@ -377,8 +379,8 @@ def try_fast_answer(
 ) -> FastAnswer | None:
     """Return a FastAnswer when the input is fully resolvable by code, else None.
 
-    Order matters: cheap/high-value matchers run first, then persisted
-    runtime-generated plugins (from `data/fastpath_plugins/`).
+    Order matters: built-in matchers, then promoted (source-merged) detectors,
+    then persisted runtime plugins.
     """
     if not text or not text.strip():
         return None
@@ -396,6 +398,15 @@ def try_fast_answer(
         result = check(text)
         if result is not None:
             return result
+
+    # promoted detectors (merged into src by the plugin-management UI)
+    for detect in _GENERATED_DETECTORS:
+        try:
+            answer = detect(text)
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(answer, str) and answer.strip():
+            return FastAnswer(text, "promoted", answer.strip(), answer.strip()[:200])
 
     # sandbox needs context (path), so it's handled separately
     if _SANDBOX_LIST_RE.search(text):

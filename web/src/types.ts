@@ -97,3 +97,13 @@ export interface TaskSnapshot {
   error: string | null
   events: TaskEvent[]
 }
+
+// ---- plugin management ---------------------------------------------------------
+
+export interface PluginItem {
+  name: string
+  trigger: string
+  source: string
+  mtime: number
+  size: number
+}
