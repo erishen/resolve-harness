@@ -81,6 +81,9 @@ class Harness:
             system_prompt=self.settings.system_prompt,
             verbose=self.settings.verbose,
         )
+        # per-turn diagnostics, filled by run()
+        self.last_trace: list[dict[str, Any]] = []
+        self.last_steps: int = 0
 
     # -- tool registration (delegated) ---------------------------------------
 
@@ -107,6 +110,8 @@ class Harness:
 
         The conversation is remembered across calls via short-term memory;
         facts the agent stores with `remember` persist via long-term memory.
+        After the call, `self.last_trace` holds the tool-call events of this
+        turn (for UI display), and `self.last_steps` the iteration count.
         """
         self.short_term.add("user", text)
 
@@ -122,6 +127,9 @@ class Harness:
 
         transcript = final_state["messages"]
         final_reply = self._extract_final_reply(transcript)
+
+        self.last_trace = self._extract_trace(transcript)
+        self.last_steps = final_state["step"]
 
         if final_reply:
             self.short_term.add("assistant", final_reply)
@@ -174,6 +182,34 @@ class Harness:
             elif getattr(m, "type", "") == "ai" and m.content:
                 return str(m.content)
         return ""
+
+    @staticmethod
+    def _extract_trace(messages: list[Any]) -> list[dict[str, Any]]:
+        """Flatten tool-call / tool-result pairs into UI-friendly events."""
+        from langchain_core.messages import AIMessage, ToolMessage
+
+        pending: dict[str, str] = {}
+        trace: list[dict[str, Any]] = []
+        for m in messages:
+            if isinstance(m, AIMessage):
+                for tc in getattr(m, "tool_calls", None) or []:
+                    pending[tc.get("id", "")] = tc["name"]
+                    trace.append(
+                        {
+                            "kind": "tool_call",
+                            "name": tc["name"],
+                            "args": tc.get("args") or {},
+                        }
+                    )
+            elif isinstance(m, ToolMessage):
+                trace.append(
+                    {
+                        "kind": "tool_result",
+                        "name": pending.pop(m.tool_call_id, "tool"),
+                        "content": str(m.content),
+                    }
+                )
+        return trace
 
 
 def _configure_logging(verbose: bool) -> None:

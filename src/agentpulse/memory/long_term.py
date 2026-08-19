@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -36,25 +37,29 @@ class LongTermMemory:
         self.db_path = Path(db_path)
         if str(self.db_path) != ":memory:":
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self.db_path))
+        # Web servers (FastAPI) touch this from multiple threads: allow it and
+        # guard every op with a lock. Single connection, serialized writes.
+        self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._lock = threading.RLock()
         self._init_schema()
 
     # -- schema -------------------------------------------------------------
 
     def _init_schema(self) -> None:
-        self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS memories (
-                scope      TEXT NOT NULL,
-                key        TEXT NOT NULL,
-                value      TEXT NOT NULL,          -- JSON-encoded
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (scope, key)
+        with self._lock:
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memories (
+                    scope      TEXT NOT NULL,
+                    key        TEXT NOT NULL,
+                    value      TEXT NOT NULL,          -- JSON-encoded
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (scope, key)
+                )
+                """
             )
-            """
-        )
-        self._conn.commit()
+            self._conn.commit()
 
     # -- core ops -----------------------------------------------------------
 
@@ -62,24 +67,26 @@ class LongTermMemory:
         """Upsert a fact. `value` can be any JSON-serializable object."""
         payload = json.dumps(value, ensure_ascii=False)
         now = self._now()
-        self._conn.execute(
-            """
-            INSERT INTO memories (scope, key, value, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(scope, key) DO UPDATE SET
-                value = excluded.value,
-                updated_at = excluded.updated_at
-            """,
-            (scope, key, payload, now),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO memories (scope, key, value, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(scope, key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (scope, key, payload, now),
+            )
+            self._conn.commit()
 
     def recall(self, key: str, scope: str = "default", default: Any = None) -> Any:
         """Fetch one fact; returns `default` when absent."""
-        row = self._conn.execute(
-            "SELECT value FROM memories WHERE scope = ? AND key = ?",
-            (scope, key),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM memories WHERE scope = ? AND key = ?",
+                (scope, key),
+            ).fetchone()
         if row is None:
             return default
         return json.loads(row["value"])
@@ -102,7 +109,8 @@ class LongTermMemory:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY updated_at DESC"
 
-        rows = self._conn.execute(sql, params).fetchall()
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
         return [
             {
                 "scope": r["scope"],
@@ -114,21 +122,24 @@ class LongTermMemory:
         ]
 
     def forget(self, key: str, scope: str = "default") -> bool:
-        cur = self._conn.execute(
-            "DELETE FROM memories WHERE scope = ? AND key = ?", (scope, key)
-        )
-        self._conn.commit()
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM memories WHERE scope = ? AND key = ?", (scope, key)
+            )
+            self._conn.commit()
         return cur.rowcount > 0
 
     def count(self, scope: str | None = None) -> int:
-        if scope is None:
-            return self._conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-        return self._conn.execute(
-            "SELECT COUNT(*) FROM memories WHERE scope = ?", (scope,)
-        ).fetchone()[0]
+        with self._lock:
+            if scope is None:
+                return self._conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+            return self._conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE scope = ?", (scope,)
+            ).fetchone()[0]
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     @staticmethod
     def _now() -> str:

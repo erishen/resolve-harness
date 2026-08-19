@@ -16,15 +16,30 @@
 cd work/harness/agentpulse
 cp .env.example .env          # 填 LLM_MODEL / LLM_API_KEY
 uv sync                        # 安装依赖（国内自动走清华镜像）
-uv run agentpulse-chat         # 交互式对话
+uv run agentpulse-chat         # 交互式对话（终端）
 ```
 
 不带真实 key 也能跑通全链路：`uv run pytest` 用 FakeRouter 驱动循环，不碰网络。
 
 ```bash
-uv run pytest                 # 离线单元测试（memory / tools / loop）
+uv run pytest                 # 离线单元测试（memory / tools / loop / api）
 uv run python examples/tool_demo.py   # 脚本演示：时间/计算/记忆
 ```
+
+### Web UI（Vite + React）
+
+两个终端分别起后端和前端：
+
+```bash
+# 终端 1：FastAPI 后端（http://127.0.0.1:8000，交互文档在 /docs）
+make api
+
+# 终端 2：Vite 前端（http://localhost:5173）
+cd web && pnpm install        # 首次
+make web-dev
+```
+
+打开 http://localhost:5173 即可聊天。前端展示 agent 每次的工具调用（回复下方的小标签），右侧栏实时列出长期记忆（可删除），顶部「清空会话」重置短期记忆。Vite dev 已配置 `/api` 代理到后端，无需处理 CORS。
 
 ## 架构
 
@@ -106,12 +121,14 @@ print(h.run("帮我抓一下 https://example.com 的标题"))
 src/agentpulse/
   config.py        Settings（.env → dataclass）
   llm.py           LiteLLMRouter（统一路由 + 重试 + tool_calls 解析）
-  harness.py       Harness（对外 API）
-  memory/          短期 + 长期记忆
+  harness.py       Harness（对外 API + last_trace 工具调用追踪）
+  api.py           FastAPI 层（/api/chat、/api/memories…，供前端调用）
+  memory/          短期 + 长期记忆（长期 SQLite 线程安全）
   tools/           ToolRegistry + 内置工具
   graph/           AgentState + build_loop（LangGraph 图）
+web/               Vite + React + TS 聊天前端（vite proxy /api → :8000）
 examples/          chat.py（REPL）/ tool_demo.py（脚本演示）
-tests/             memory / tools / loop 离线测试
+tests/             memory / tools / loop / api 离线测试
 ```
 
 ## 许可证
