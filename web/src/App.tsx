@@ -92,7 +92,7 @@ export default function App() {
         {mode === 'chat' ? (
           <ChatPanel onAfterTurn={() => void loadMemories()} />
         ) : mode === 'task' ? (
-          <TaskPanel />
+          <TaskPanel onMemoryChange={() => void loadMemories()} />
         ) : (
           <PluginPanel />
         )}

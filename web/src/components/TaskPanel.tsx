@@ -104,7 +104,12 @@ function groupEvents(events: TaskEvent[]): GroupedItem[] {
   return out
 }
 
-export default function TaskPanel() {
+interface Props {
+  /** fired when a task finishes/errors — lets the app refresh long-term memory */
+  onMemoryChange?: () => void
+}
+
+export default function TaskPanel({ onMemoryChange }: Props) {
   const [objective, setObjective] = useState('')
   const [events, setEvents] = useState<TaskEvent[]>([])
   const [state, setState] = useState<RunState>('idle')
@@ -145,12 +150,14 @@ export default function TaskPanel() {
         if (ev.type === 'task_start') setModel(String(ev.data.model ?? ''))
         if (ev.type === 'task_end') {
           setState('done')
+          onMemoryChange?.()
           es.close()
           esRef.current = null
         }
         if (ev.type === 'error') {
           setError(String(ev.data.message ?? 'task failed'))
           setState('error')
+          onMemoryChange?.()
           es.close()
           esRef.current = null
         }
