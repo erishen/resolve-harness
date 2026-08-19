@@ -262,14 +262,37 @@ def save_plugin(source: str, plugin_dir: str | Path | None = None) -> str:
     return name
 
 
+# module-level plugin cache: {plugin_dir: (file_stats, detectors)}
+# file_stats maps name -> (mtime, size); any change triggers a full reload,
+# so newly persisted plugins are picked up on the next query.
+_load_cache: dict[str, tuple[dict[str, tuple[float, int]], list[Callable[[str], str | None]]]] = {}
+
+
 def load_plugins(plugin_dir: str | Path | None = None) -> list[Callable[[str], str | None]]:
     """Load persisted detector plugins (also sandboxed — same validator).
 
     Returns a list of `detect` callables from every valid plugin file.
+    Results are cached per directory and invalidated when any file's
+    mtime/size changes (e.g. a new plugin persisted by codegen).
     """
     directory = Path(plugin_dir) if plugin_dir else default_plugin_dir()
+    key = str(directory)
     if not directory.exists():
+        _load_cache.pop(key, None)
         return []
+
+    stats: dict[str, tuple[float, int]] = {}
+    for py in sorted(directory.glob("*.py")):
+        try:
+            s = py.stat()
+        except OSError:
+            continue
+        stats[py.name] = (s.st_mtime, s.st_size)
+
+    cached = _load_cache.get(key)
+    if cached is not None and cached[0] == stats:
+        return cached[1]
+
     detectors: list[Callable[[str], str | None]] = []
     for py in sorted(directory.glob("*.py")):
         source = py.read_text(encoding="utf-8")
@@ -287,6 +310,8 @@ def load_plugins(plugin_dir: str | Path | None = None) -> list[Callable[[str], s
         detect = namespace.get("detect")
         if callable(detect):
             detectors.append(detect)
+
+    _load_cache[key] = (stats, detectors)
     return detectors
 
 

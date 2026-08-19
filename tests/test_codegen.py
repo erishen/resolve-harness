@@ -106,6 +106,24 @@ class TestPersistence:
         (tmp_path / "ok.py").write_text("def detect(t):\n    return 'fine'", encoding="utf-8")
         assert [d("x") for d in load_plugins(tmp_path)] == ["fine"]
 
+    def test_load_plugins_cached_until_change(self, tmp_path) -> None:
+        from agentpulse.codegen import _load_cache
+
+        (tmp_path / "a.py").write_text("def detect(t):\n    return 'a'", encoding="utf-8")
+        first = load_plugins(tmp_path)
+        key = str(tmp_path)
+        assert key in _load_cache
+
+        # no change -> same cached objects, no re-read/exec
+        second = load_plugins(tmp_path)
+        assert second is first
+
+        # new plugin persisted -> reload picks it up
+        (tmp_path / "b.py").write_text("def detect(t):\n    return 'b'", encoding="utf-8")
+        third = load_plugins(tmp_path)
+        assert len(third) == 2
+        assert sorted(d("x") for d in third) == ["a", "b"]
+
 
 class TestCodegenSolve:
     def test_generates_and_runs(self, tmp_path) -> None:
