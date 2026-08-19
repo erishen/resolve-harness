@@ -117,7 +117,23 @@ class Harness:
         facts the agent stores with `remember` persist via long-term memory.
         After the call, `self.last_trace` holds the tool-call events of this
         turn (for UI display), and `self.last_steps` the iteration count.
+
+        Deterministic queries (arithmetic, current time) short-circuit through
+        the fast path: answered by code, no LLM round-trip.
         """
+        from .fastpath import try_fast_answer
+
+        fast = try_fast_answer(text)
+        if fast is not None:
+            self.short_term.add("user", text)
+            self.short_term.add("assistant", fast.answer)
+            self.last_trace = [
+                {"kind": "tool_call", "name": fast.method, "args": {}},
+                {"kind": "tool_result", "name": fast.method, "content": fast.detail},
+            ]
+            self.last_steps = 1
+            return fast.answer
+
         self.short_term.add("user", text)
 
         history = self.short_term.as_list()

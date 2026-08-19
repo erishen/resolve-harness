@@ -166,6 +166,48 @@ class TaskRunner:
             self._emit(record, "task_start", {"objective": record.objective, "model": record.model})
             objective = record.objective
 
+            # Fast path: deterministic queries (arithmetic / time) are resolved
+            # by code — no Planner/Specialist/Evaluator LLM round-trips at all.
+            from .fastpath import try_fast_answer
+
+            fast = try_fast_answer(objective)
+            if fast is not None:
+                self._emit(
+                    record,
+                    "plan",
+                    {
+                        "objective": objective,
+                        "subtasks": [
+                            {
+                                "index": 0,
+                                "title": f"直接计算（{fast.method}，无需模型）",
+                                "instruction": objective,
+                                "artifacts": [],
+                            }
+                        ],
+                        "round": 0,
+                    },
+                )
+                self._emit(record, "subtask_start", {"index": 0, "title": "代码直接计算", "total": 1})
+                self._emit(
+                    record,
+                    "tool_result",
+                    {"name": fast.method, "content": fast.detail, "step": 1, "subtask": 0},
+                )
+                self._emit(record, "subtask_done", {"index": 0, "title": "代码直接计算", "summary": fast.answer})
+                self._emit(
+                    record,
+                    "evaluation",
+                    {"passed": True, "score": 100, "feedback": "确定性计算由代码直接完成，零模型调用", "missing": []},
+                )
+                self._emit(
+                    record,
+                    "task_end",
+                    {"reply": fast.answer, "passed": True, "score": 100, "rounds": 1},
+                )
+                record.status = "done"
+                return
+
             for round_no in range(self.max_replan_rounds + 1):
                 plan = self._planner.plan(objective)
                 self._emit(record, "plan", {"objective": objective, "subtasks": plan, "round": round_no})

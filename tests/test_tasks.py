@@ -205,6 +205,25 @@ class TestOrchestration:
         assert events[-1]["type"] == "task_end"
         assert events[0]["type"] == "task_start"
 
+    def test_fast_path_skips_llm_entirely(self) -> None:
+        """Deterministic objective short-circuits: the FakeRouter is never
+        called — pure code answers "计算 2+3" in milliseconds."""
+        h = make_harness([])  # empty script: any LLM call would yield an error event
+        runner = TaskRunner(h)
+        task_id = runner.start("计算 2+3")
+        events = drain(task_id, runner)
+        types = types_of(events)
+        assert "error" not in types
+        assert types[-1] == "task_end"
+        end = events[-1]
+        assert end["data"]["passed"] is True
+        assert end["data"]["score"] == 100
+        assert "5" in end["data"]["reply"]
+        # task tree events still fire for the UI
+        assert "plan" in types and "evaluation" in types
+        # zero LLM round-trips
+        assert h.router.calls == []
+
     def test_planner_failure_marks_error(self) -> None:
         class BoomRouter(FakeRouter):
             def complete(self, messages, tools=None, **kwargs):
