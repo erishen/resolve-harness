@@ -32,18 +32,18 @@ def _make_memory_tools(memory: LongTermMemory) -> list:
     def remember(key: str, value: Any, scope: str = "default") -> str:
         """Store a fact in long-term memory. Use for user preferences and facts worth keeping."""
         memory.remember(key, value, scope=scope)
-        return f"stored '{key}' in scope '{scope}'"
+        return f"已存储 '{key}'（scope={scope}）"
 
     def recall(key: str, scope: str = "default") -> str:
         """Read a fact from long-term memory. Returns 'null' when absent."""
         value = memory.recall(key, scope=scope, default=None)
-        return f"{key} = {value}" if value is not None else f"'{key}' not found in scope '{scope}'"
+        return f"{key} = {value}" if value is not None else f"在 scope '{scope}' 中未找到 '{key}'"
 
     def list_memories(scope: str = "default") -> str:
         """List all fact keys currently stored in the given scope."""
         rows = memory.search(scope=scope)
         if not rows:
-            return f"no memories in scope '{scope}'"
+            return f"scope '{scope}' 中没有记忆"
         return "\n".join(f"- {r['key']}" for r in rows)
 
     return [remember, recall, list_memories]

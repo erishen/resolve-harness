@@ -83,7 +83,7 @@ class TestBuiltins:
     def test_remember_then_recall(self, registry: ToolRegistry) -> None:
         registry.execute("remember", {"key": "theme", "value": "dark"})
         assert registry.execute("recall", {"key": "theme"}) == "theme = dark"
-        assert registry.execute("recall", {"key": "missing"}) == "'missing' not found in scope 'default'"
+        assert registry.execute("recall", {"key": "missing"}) == "在 scope 'default' 中未找到 'missing'"
 
     def test_list_memories(self, registry: ToolRegistry) -> None:
         registry.execute("remember", {"key": "a", "value": 1})

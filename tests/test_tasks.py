@@ -185,7 +185,7 @@ class TestOrchestration:
         task_id = runner.start("写一个文件")
         events = drain(task_id, runner)
         results = [e["data"]["content"] for e in events if e["type"] == "tool_result"]
-        assert any("written hello.txt" in r for r in results)
+        assert any("已写入 hello.txt" in r for r in results)
         from pathlib import Path
 
         assert Path("/tmp/agentpulse-sandbox-test/hello.txt").read_text() == "hi"

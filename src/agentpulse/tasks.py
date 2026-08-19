@@ -30,7 +30,7 @@ from typing import Any, Callable
 from .graph.loop import build_loop
 from .harness import Harness
 from .llm import LiteLLMRouter
-from .roles import Evaluator, Planner
+from .roles import Evaluator, Planner, _lang_name
 
 MAX_REPLAN_ROUNDS = 1  # hard ceiling on plan-revision rounds (anti-runaway)
 
@@ -47,6 +47,8 @@ Rules:
 2. Do NOT redo earlier subtasks; build on the context above.
 3. When done, end with a concise summary of what you produced and where it is.
 
+Language: write your thinking and your final summary in {language} — never in English.
+
 Begin."""
 
 REPORTER_PROMPT = """You are the REPORTER of a multi-agent task system. Compose the final deliverable for the user based on the executed work.
@@ -59,7 +61,9 @@ Subtasks executed:
 Results:
 {results}
 
-Write a final deliverable in Markdown: a short opening summary, what was done per subtask, and where artifacts live. Be concrete and complete. Output only the deliverable."""
+Write a final deliverable in Markdown: a short opening summary, what was done per subtask, and where artifacts live. Be concrete and complete. Output only the deliverable.
+
+Language: write the entire deliverable in {language} — never in English."""
 
 
 class TaskRecord:
@@ -94,15 +98,17 @@ class TaskRunner:
         self,
         harness: Harness,
         *,
+        language: str = "zh",
         max_steps: int | None = None,
         max_replan_rounds: int = MAX_REPLAN_ROUNDS,
     ) -> None:
         self.harness = harness
         self.router: LiteLLMRouter = harness.router
+        self.language = language
         self.max_steps = max_steps or harness.settings.max_steps
         self.max_replan_rounds = max_replan_rounds
-        self._planner = Planner(self.router)
-        self._evaluator = Evaluator(self.router)
+        self._planner = Planner(self.router, language=language)
+        self._evaluator = Evaluator(self.router, language=language)
         self._records: dict[str, TaskRecord] = {}
         self._lock = threading.Lock()
 
@@ -215,6 +221,7 @@ class TaskRunner:
                 title=st["title"],
                 instruction=st["instruction"],
                 context=context,
+                language=_lang_name(self.language),
             )
 
             def emit_for_subtask(kind: str, data: dict[str, Any], _idx: int = i) -> None:
@@ -254,6 +261,7 @@ class TaskRunner:
                             objective=objective,
                             plan=_format_plan_for_reporter(plan),
                             results=_format_results_for_reporter(results),
+                            language=_lang_name(self.language),
                         ),
                     }
                 ],

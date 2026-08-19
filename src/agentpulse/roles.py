@@ -67,6 +67,8 @@ Objective: {objective}
 
 Break it into 2-5 concrete, sequential subtasks. Every subtask instruction MUST be self-contained: the executor only sees your instruction plus the summaries of earlier subtasks, so spell out exactly what to produce and how.
 
+Language: write every `title`, `instruction` and `artifacts` in {language} — never in English.
+
 Output ONLY a JSON object, no prose, in this exact shape:
 {{
   "subtasks": [
@@ -75,15 +77,31 @@ Output ONLY a JSON object, no prose, in this exact shape:
 }}"""
 
 
+_LANGUAGE_NAMES = {"zh": "简体中文", "en": "English", "ja": "日本語"}
+
+
+def _lang_name(language: str) -> str:
+    return _LANGUAGE_NAMES.get(language, language)
+
+
 class Planner:
-    def __init__(self, router: LiteLLMRouter, *, max_retries: int = 2, verbose: bool = False) -> None:
+    def __init__(
+        self,
+        router: LiteLLMRouter,
+        *,
+        language: str = "zh",
+        max_retries: int = 2,
+        verbose: bool = False,
+    ) -> None:
         self.router = router
+        self.language = language
         self.max_retries = max_retries
         self.verbose = verbose
 
     def plan(self, objective: str) -> list[dict[str, Any]]:
         """Return a list of subtask dicts ({title, instruction, artifacts})."""
-        messages = [{"role": "user", "content": PLANNER_PROMPT.format(objective=objective)}]
+        lang = _lang_name(self.language)
+        messages = [{"role": "user", "content": PLANNER_PROMPT.format(objective=objective, language=lang)}]
         last_error = "no usable plan output"
         for attempt in range(1, self.max_retries + 1):
             response = self.router.complete(messages, temperature=0.2)
@@ -110,7 +128,7 @@ class Planner:
             last_error = f"attempt {attempt} produced unparseable plan: {content[:200]!r}"
             # force a retry with explicit instruction to emit valid JSON
             messages = [
-                {"role": "user", "content": PLANNER_PROMPT.format(objective=objective)},
+                {"role": "user", "content": PLANNER_PROMPT.format(objective=objective, language=lang)},
                 {
                     "role": "assistant",
                     "content": "I must output ONLY a valid JSON object of the requested shape.",
@@ -142,12 +160,22 @@ Judge strictly whether the objective is fully satisfied. If anything is unverifi
   "score": 0-100,
   "feedback": "what is missing or how to improve",
   "missing": ["concrete missing items"]
-}}"""
+}}
+
+Language: write every `feedback` and every item of `missing` in {language} — never in English."""
 
 
 class Evaluator:
-    def __init__(self, router: LiteLLMRouter, *, max_retries: int = 2, verbose: bool = False) -> None:
+    def __init__(
+        self,
+        router: LiteLLMRouter,
+        *,
+        language: str = "zh",
+        max_retries: int = 2,
+        verbose: bool = False,
+    ) -> None:
         self.router = router
+        self.language = language
         self.max_retries = max_retries
         self.verbose = verbose
 
@@ -164,6 +192,7 @@ class Evaluator:
             plan=_format_plan(plan),
             results=_format_results(results),
             deliverable=deliverable[:6000] or "(empty)",
+            language=_lang_name(self.language),
         )
         messages = [{"role": "user", "content": prompt}]
         last_error = "no usable verdict output"
