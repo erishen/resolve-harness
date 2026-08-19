@@ -174,11 +174,22 @@ def _to_llm_messages(history: list[Any]) -> list[dict[str, Any]]:
                 ]
             out.append(d)
         elif isinstance(m, ToolMessage):
-            out.append({"role": "tool", "content": m.content})
+            # OpenAI-compatible APIs require tool messages to carry the id of
+            # the assistant tool_call they answer (missing it -> json_parse_error)
+            out.append(
+                {
+                    "role": "tool",
+                    "content": m.content,
+                    "tool_call_id": m.tool_call_id or "",
+                }
+            )
         elif isinstance(m, dict):
             role = m.get("role", "assistant")
             if role == "tool":
-                out.append({"role": "tool", "content": str(m.get("content", ""))})
+                d: dict[str, Any] = {"role": "tool", "content": str(m.get("content", ""))}
+                if m.get("tool_call_id"):
+                    d["tool_call_id"] = m["tool_call_id"]
+                out.append(d)
             else:
                 d = {"role": role, "content": str(m.get("content", ""))}
                 if m.get("tool_calls"):

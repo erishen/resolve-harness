@@ -151,3 +151,27 @@ class TestLoop:
         assert tools is not None
         names = {t["function"]["name"] for t in tools}
         assert "add" in names
+
+    def test_tool_messages_carry_tool_call_id(self) -> None:
+        """Regression: OpenAI-compatible APIs reject role=tool messages without
+        tool_call_id (agnes gateway: json_parse_error). The 2nd LLM call must
+        pair each tool result with its originating tool_call id."""
+        router = FakeRouter([tool_call("add", {"a": 1, "b": 2}), answer("3")])
+        run_loop(router, max_steps=5)
+        assert len(router.seen) >= 2, "loop should call the model twice"
+        second_call = router.seen[1]
+
+        tool_msgs = [m for m in second_call if m.get("role") == "tool"]
+        assert tool_msgs, "expected a tool message in the 2nd LLM call"
+        assert all(m.get("tool_call_id") for m in tool_msgs), (
+            f"tool messages must carry tool_call_id, got: {tool_msgs}"
+        )
+
+        assistant_call_ids = [
+            tc["id"]
+            for m in second_call
+            if m.get("role") == "assistant" and m.get("tool_calls")
+            for tc in m["tool_calls"]
+        ]
+        assert assistant_call_ids, "expected assistant tool_calls in the 2nd call"
+        assert tool_msgs[0]["tool_call_id"] == assistant_call_ids[0]
