@@ -2,7 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // Dev: Vite on :5173, proxies /api to the FastAPI backend on :8000.
+// base './' so the built dist/index.html also opens directly from the
+// filesystem (no server) — handy for static previews.
 export default defineConfig({
+  base: './',
   plugins: [react()],
   server: {
     port: 5173,
