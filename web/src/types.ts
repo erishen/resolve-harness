@@ -107,3 +107,8 @@ export interface PluginItem {
   mtime: number
   size: number
 }
+
+export interface ExampleItem {
+  label: string
+  text: string
+}

@@ -397,6 +397,11 @@ body {
   color: var(--accent);
 }
 
+.ex-chip.ex-regen {
+  border-style: dashed;
+  color: var(--accent);
+}
+
 .ex-chip:disabled {
   opacity: 0.5;
   cursor: not-allowed;

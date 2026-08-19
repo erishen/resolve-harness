@@ -5,16 +5,6 @@ import type { Subtask, TaskEvent } from '../types'
 
 type RunState = 'idle' | 'running' | 'done' | 'error'
 
-/** One-click demo objectives — see examples/tasks.md for what each showcases. */
-const EXAMPLES: { label: string; text: string }[] = [
-  { label: '计算', text: '计算 12 × 34 是多少' },
-  { label: '多步计算', text: '计算 (23+45) 和 (67+89)，并告诉我哪个结果更大' },
-  { label: '写文档', text: '写一份 150 字左右的 RAG 技术简介，保存为沙箱文件 rag-intro.md' },
-  { label: '小项目', text: '创建一个小型 Python 项目：README.md 写项目说明，hello.py 写一个打印问候的脚本' },
-  { label: '记忆', text: '记住我的偏好：我喜欢用暗色主题；然后告诉我你记住了什么' },
-  { label: '代码+文档', text: '写一个 Python 快速排序函数保存为 quicksort.py，并写 100 字使用说明保存为 quicksort-notes.md' },
-]
-
 /** A display-level item: plan / subtask (with nested events) / verdict / etc. */
 type GroupedItem =
   | { kind: 'goal'; objective: string }
@@ -115,8 +105,26 @@ export default function TaskPanel({ onMemoryChange }: Props) {
   const [state, setState] = useState<RunState>('idle')
   const [error, setError] = useState('')
   const [model, setModel] = useState('')
+  const [examples, setExamples] = useState<{ label: string; text: string }[]>([])
+  const [examplesLoading, setExamplesLoading] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
+
+  const loadExamples = useCallback(async (force = false) => {
+    setExamplesLoading(true)
+    try {
+      const { examples } = await api.examples(force)
+      setExamples(examples)
+    } catch {
+      /* backend down — keep whatever we have */
+    } finally {
+      setExamplesLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadExamples()
+  }, [loadExamples])
 
   const items = groupEvents(events)
   const toolCalls = events.filter((e) => e.type === 'tool_call').length
@@ -187,9 +195,9 @@ export default function TaskPanel({ onMemoryChange }: Props) {
         </div>
         <div className="task-examples">
           <span className="ex-label">示例</span>
-          {EXAMPLES.map((ex) => (
+          {examples.map((ex) => (
             <button
-              key={ex.label}
+              key={`${ex.label}:${ex.text.slice(0, 12)}`}
               type="button"
               className="ex-chip"
               disabled={busy}
@@ -199,6 +207,15 @@ export default function TaskPanel({ onMemoryChange }: Props) {
               {ex.label}
             </button>
           ))}
+          <button
+            type="button"
+            className="ex-chip ex-regen"
+            disabled={busy || examplesLoading}
+            title="根据长期记忆偏好重新生成示例"
+            onClick={() => void loadExamples(true)}
+          >
+            {examplesLoading ? '生成中…' : '🔄 重新生成'}
+          </button>
         </div>
         <form
           onSubmit={(e) => {
