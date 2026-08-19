@@ -123,7 +123,7 @@ class Harness:
         """
         from .fastpath import try_fast_answer
 
-        fast = try_fast_answer(text)
+        fast = try_fast_answer(text, sandbox_dir=self.sandbox_dir)
         if fast is not None:
             self.short_term.add("user", text)
             self.short_term.add("assistant", fast.answer)

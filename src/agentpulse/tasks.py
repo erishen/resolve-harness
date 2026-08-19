@@ -170,7 +170,7 @@ class TaskRunner:
             # by code — no Planner/Specialist/Evaluator LLM round-trips at all.
             from .fastpath import try_fast_answer
 
-            fast = try_fast_answer(objective)
+            fast = try_fast_answer(objective, sandbox_dir=self.harness.sandbox_dir)
             if fast is not None:
                 self._emit(
                     record,

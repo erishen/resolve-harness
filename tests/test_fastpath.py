@@ -48,6 +48,122 @@ class TestArithmetic:
         assert "2+3 = 5" in result.detail
 
 
+class TestStatistics:
+    def test_max(self) -> None:
+        result = try_fast_answer("3、1、5 的最大值")
+        assert result is not None and result.method == "statistics"
+        assert "5" in result.answer
+
+    def test_min(self) -> None:
+        result = try_fast_answer("这些数里最小的是 8, 3, 12")
+        assert result is not None
+        assert "3" in result.answer
+
+    def test_average(self) -> None:
+        result = try_fast_answer("1, 2, 3 的平均值")
+        assert result is not None
+        assert "2" in result.answer
+
+    def test_sum(self) -> None:
+        result = try_fast_answer("10 和 20 和 30 的总和")
+        assert result is not None
+        assert "60" in result.answer
+
+    def test_sort(self) -> None:
+        result = try_fast_answer("把 3, 1, 2 从小到大排序")
+        assert result is not None
+        assert result.answer.count("、") >= 2
+        assert "1" in result.answer and "2" in result.answer and "3" in result.answer
+
+    def test_single_number_not_enough(self) -> None:
+        assert try_fast_answer("5 的最大值") is None
+
+
+class TestUnitConvert:
+    @pytest.mark.parametrize(
+        "query,expected",
+        [
+            ("100 华氏度等于多少摄氏度", "37.78"),
+            ("100 摄氏度等于多少华氏度", "212"),
+            ("5 公里等于多少英里", "3.11"),
+            ("10 英里等于多少公里", "16.09"),
+            ("2 千克等于多少磅", "4.41"),
+            ("3 斤等于多少千克", "1.5"),
+            ("2 小时等于多少分钟", "120"),
+            ("90 分钟等于多少小时", "1.5"),
+        ],
+    )
+    def test_conversions(self, query: str, expected: str) -> None:
+        result = try_fast_answer(query)
+        assert result is not None, query
+        assert result.method == "unit_convert"
+        assert expected in result.answer
+
+
+class TestDateMath:
+    def test_tomorrow(self) -> None:
+        result = try_fast_answer("明天是几号")
+        assert result is not None and result.method == "date_math"
+        assert "明天是" in result.answer
+
+    def test_days_later(self) -> None:
+        result = try_fast_answer("3 天后是哪天")
+        assert result is not None
+        assert "3 天后是" in result.answer
+
+    def test_date_diff(self) -> None:
+        result = try_fast_answer("2026-01-01 和 2026-01-10 相差几天")
+        assert result is not None
+        assert "9 天" in result.answer
+
+
+class TestBaseConvert:
+    @pytest.mark.parametrize(
+        "query,expected",
+        [
+            ("255 的十六进制", "ff"),
+            ("17 的二进制", "10001"),
+            ("8 的八进制", "10"),
+        ],
+    )
+    def test_base(self, query: str, expected: str) -> None:
+        result = try_fast_answer(query)
+        assert result is not None, query
+        assert result.method == "base_convert"
+        assert expected in result.answer
+
+
+class TestTextStats:
+    def test_char_count(self) -> None:
+        result = try_fast_answer("「你好世界」有几个字")
+        assert result is not None and result.method == "text_stats"
+        assert "4" in result.answer
+
+
+class TestSandbox:
+    def test_list_files(self, tmp_path) -> None:
+        (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "sub" / "b.md").write_text("y", encoding="utf-8")
+        result = try_fast_answer("沙箱里有哪些文件", sandbox_dir=str(tmp_path))
+        assert result is not None and result.method == "sandbox_files"
+        assert "a.txt" in result.answer and "sub/b.md" in result.answer
+
+    def test_read_file(self, tmp_path) -> None:
+        (tmp_path / "hello.txt").write_text("你好 fast path", encoding="utf-8")
+        result = try_fast_answer("读取沙箱里的 hello.txt", sandbox_dir=str(tmp_path))
+        assert result is not None
+        assert "你好 fast path" in result.answer
+
+    def test_missing_sandbox_file(self, tmp_path) -> None:
+        result = try_fast_answer("读取沙箱里的 nope.txt", sandbox_dir=str(tmp_path))
+        assert result is not None
+        assert "不存在" in result.answer
+
+    def test_no_sandbox_dir_no_match(self) -> None:
+        assert try_fast_answer("沙箱里有哪些文件") is None
+
+
 class TestTime:
     def test_current_time(self) -> None:
         result = try_fast_answer("现在几点")
