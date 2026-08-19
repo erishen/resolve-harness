@@ -39,8 +39,21 @@ def build_loop(
     *,
     system_prompt: str,
     verbose: bool = False,
+    emit: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """Build and compile the agent loop graph.
+
+    Args:
+        router: model router used by the agent node.
+        registry: tools available to the agent.
+        system_prompt: system message prepended to every completion.
+        verbose: log each step to stderr.
+        emit: optional callback fired on process events, so a task runner /
+            UI can stream the loop's inner workings live:
+            - ("thought", {"content": ...})       — agent reasoning text
+            - ("tool_call", {"name", "args"})     — agent decided to call a tool
+            - ("tool_result", {"name", "content"})— tool execution result
+            Called from worker threads; must be thread-safe.
 
     Returns a callable that accepts an initial `AgentState` dict and returns
     the final state (with `messages` containing the full transcript).
@@ -59,14 +72,20 @@ def build_loop(
             tools=registry.schemas() if len(registry) else None,
         )
         tool_calls = router.parse_tool_calls(response)
+        content = response.get("content") or ""
         if verbose:
             calls = ", ".join(tc["name"] for tc in tool_calls) or "none"
             logger.info("[agent] step=%s tool_calls=%s", step, calls)
+        if emit:
+            if content:
+                emit("thought", {"content": content, "step": step})
+            for tc in tool_calls:
+                emit("tool_call", {"name": tc["name"], "args": tc["arguments"], "step": step})
 
         return {
             "messages": [
                 AIMessage(
-                    content=response.get("content") or "",
+                    content=content,
                     tool_calls=[
                         {
                             "name": tc["name"],
@@ -93,6 +112,8 @@ def build_loop(
                 result = registry.execute(name, args)
             except Exception as exc:  # noqa: BLE001 - tool errors go back to the model
                 result = f"Tool error: {exc}"
+            if emit:
+                emit("tool_result", {"name": name, "content": result, "step": state.get("step", 0)})
             tool_messages.append(ToolMessage(content=result, tool_call_id=tc.get("id") or ""))
         return {"messages": tool_messages}
 

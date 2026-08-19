@@ -3,6 +3,7 @@ import type {
   ChatResponse,
   MemoryRow,
   StateResponse,
+  TaskSnapshot,
   TranscriptItem,
 } from './types'
 
@@ -31,6 +32,13 @@ export const api = {
     request<{ ok: boolean }>(`/memories?key=${encodeURIComponent(key)}`, {
       method: 'DELETE',
     }),
+  createTask: (objective: string) =>
+    request<{ task_id: string }>('/tasks', {
+      method: 'POST',
+      body: JSON.stringify({ objective }),
+    }),
+  getTask: (taskId: string) => request<TaskSnapshot>(`/tasks/${taskId}`),
+  listTasks: () => request<{ tasks: TaskSnapshot[] }>('/tasks'),
 }
 
 // transcript items -> ChatMessage (group consecutive tool traces into the reply)

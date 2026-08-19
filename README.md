@@ -47,7 +47,12 @@ cd web && pnpm install        # 首次
 make web-dev
 ```
 
-前端展示 agent 每次的工具调用（回复下方的小标签），右侧栏实时列出长期记忆（可删除），顶部「清空会话」重置短期记忆。Vite dev 已配置 `/api` 代理到后端，无需处理 CORS。
+打开 http://localhost:5173 即可使用。界面有**两个模式**：
+
+- **聊天**：一问一答，工具调用以回复下方的小标签展示；
+- **任务**（任务工作台）：输入一个目标（如「写一份 RAG 技术简介并存到沙箱文件」），agent 自主规划 → 调用工具 → 迭代，每一步（思考 / 工具调用 / 参数 / 结果 / 最终交付）通过 SSE **实时流式**显示在流水线上，交付内容支持 markdown。
+
+右侧栏实时列出长期记忆（可删除），顶部「清空会话」重置短期记忆。Vite dev 已配置 `/api` 代理到后端，无需处理 CORS。
 
 ## 架构
 
@@ -80,7 +85,8 @@ make web-dev
 - 纯手写 StateGraph，不用 prebuilt `ToolNode`——循环的每个决策点都可见、可改；
 - `AgentState` 用 LangGraph 的 `add_messages` reducer 做消息累积与工具结果配对；
 - 路由函数 `should_continue` 是唯一的"继续/停止"决策点：`has_tool_calls && step < max_steps → tools`，否则 `END`；
-- `max_steps` 是硬上限，模型一直调工具也不会死循环（日志会告警）。
+- `max_steps` 是硬上限，模型一直调工具也不会死循环（日志会告警）；
+- 支持 `emit` 事件回调：节点执行时发出 `thought / tool_call / tool_result` 事件，任务工作台借此把循环过程实时流给前端（SSE）。
 
 ### Harness（`harness.py`）
 
@@ -88,11 +94,27 @@ make web-dev
 - 模型路由全部走 LiteLLM：换模型只改 `LLM_MODEL` 一个字符串，OpenAI/Anthropic/DeepSeek/任意兼容端点通用；
 - 工具注册表是"唯一执行通道"：`@h.register_tool` 注册，schema 自动从函数签名推导，工具执行错误会以文本回注给模型重试。
 
+### Tasks（`tasks.py`）
+
+- `TaskRunner.start(objective)` 把目标丢进后台线程跑同一个 loop（任务专用 system prompt：先规划 → 用工具 → 交付）；
+- 每个 inner step 事件（`task_start / thought / tool_call / tool_result / task_end`）实时进入队列，`/api/tasks/{id}/stream` 以 SSE 推给前端；
+- 任务记录保留全部事件，晚订阅者也能拿到完整历史；`max_steps` 兜底防止失控。
+
 ### Memory（`memory/`）
 
 - **短期**：有界 FIFO 会话转录（默认 40 条），`as_list()` 输出纯净 `{role, content}` 序列，超限裁剪最旧；
 - **长期**：SQLite 键值事实（stdlib `sqlite3`，零依赖），支持 scope 分区（按用户/会话隔离），`remember/recall/search/forget`；
 - 长期记忆通过内置工具暴露给 agent：`remember`（存事实）、`recall`（取事实）、`list_memories`（看键），从而 agent 自己就能"记住"跨会话信息。
+
+### 内置工具
+
+| 工具 | 说明 |
+|---|---|
+| `get_current_time` / `add` | 时间 / 算术 |
+| `remember` / `recall` / `list_memories` | 长期记忆读写 |
+| `read_file` / `write_file` / `list_files` | 沙箱文件（限定在 `data/sandbox/` 内，防目录穿越），让 agent 能真正产出文件 |
+
+自定义工具：`@h.register_tool(description=...)`，参数 schema 自动从类型注解推导。
 
 ## 扩展：注册自己的工具
 
@@ -130,13 +152,14 @@ src/agentpulse/
   config.py        Settings（.env → dataclass）
   llm.py           LiteLLMRouter（统一路由 + 重试 + tool_calls 解析）
   harness.py       Harness（对外 API + last_trace 工具调用追踪）
-  api.py           FastAPI 层（/api/chat、/api/memories…，供前端调用）
+  tasks.py         TaskRunner：任务模式，后台线程跑 loop + 事件流（SSE）
+  api.py           FastAPI 层（/api/chat、/api/memories、/api/tasks + SSE）
   memory/          短期 + 长期记忆（长期 SQLite 线程安全）
-  tools/           ToolRegistry + 内置工具
-  graph/           AgentState + build_loop（LangGraph 图）
-web/               Vite + React + TS 聊天前端（vite proxy /api → :8000）
+  tools/           ToolRegistry + 内置工具（含沙箱文件工具 fs.py）
+  graph/           AgentState + build_loop（LangGraph 图，支持 emit 事件回调）
+web/               Vite + React + TS 前端（聊天 + 任务工作台，vite proxy /api → :8000）
 examples/          chat.py（REPL）/ tool_demo.py（脚本演示）
-tests/             memory / tools / loop / api 离线测试
+tests/             memory / tools / loop / api / tasks 离线测试
 ```
 
 ## 许可证

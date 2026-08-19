@@ -3,6 +3,7 @@
 This is the thin "web harness": it holds one Harness instance per process,
 accepts chat turns, and returns the reply plus a per-turn tool trace and the
 session transcript, so a frontend can render the agent's internal steps.
+Task mode (TaskRunner) streams every inner step over SSE.
 
 Run (dev):
     uv run uvicorn agentpulse.api:app --reload --port 8000
@@ -15,17 +16,26 @@ Endpoints:
     GET  /api/memories               -> list long-term facts
     POST /api/memories               -> remember(key, value)
     DELETE /api/memories?key=&scope= -> forget
+    POST /api/tasks                  -> start a task -> {task_id}
+    GET  /api/tasks                  -> list tasks (snapshots)
+    GET  /api/tasks/{id}             -> one task snapshot
+    GET  /api/tasks/{id}/stream      -> SSE: task_start/thought/tool_call/tool_result/task_end
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
+import queue
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .harness import Harness
+from .tasks import TaskRunner
 
 # Vite dev server default port; the frontend proxies /api here in dev.
 _ALLOWED_ORIGINS = [
@@ -44,10 +54,19 @@ class MemoryWrite(BaseModel):
     scope: str = "default"
 
 
-def create_app(harness: Harness | None = None) -> FastAPI:
-    """App factory; allows tests to inject a harness with a fake router."""
-    app = FastAPI(title="agentpulse", version="0.1.0")
-    app.state.harness = harness or Harness()
+class TaskCreate(BaseModel):
+    objective: str = Field(min_length=1, max_length=20000)
+
+
+def create_app(
+    harness: Harness | None = None,
+    runner: TaskRunner | None = None,
+) -> FastAPI:
+    """App factory; allows tests to inject a harness/runner with fakes."""
+    h = harness or Harness()
+    app = FastAPI(title="agentpulse", version="0.2.0")
+    app.state.harness = h
+    app.state.runner = runner or TaskRunner(h)
 
     app.add_middleware(
         CORSMiddleware,
@@ -114,6 +133,54 @@ def create_app(harness: Harness | None = None) -> FastAPI:
         h: Harness = app.state.harness
         ok = h.long_term.forget(key, scope=scope)
         return {"ok": ok}
+
+    # -- tasks ---------------------------------------------------------------
+
+    @app.post("/api/tasks")
+    def task_create(req: TaskCreate) -> dict[str, str]:
+        runner: TaskRunner = app.state.runner
+        task_id = runner.start(req.objective)
+        return {"task_id": task_id}
+
+    @app.get("/api/tasks")
+    def task_list() -> dict[str, Any]:
+        runner: TaskRunner = app.state.runner
+        return {"tasks": runner.list()}
+
+    @app.get("/api/tasks/{task_id}")
+    def task_get(task_id: str) -> dict[str, Any]:
+        runner: TaskRunner = app.state.runner
+        snap = runner.get(task_id)
+        if snap is None:
+            raise HTTPException(status_code=404, detail="task not found")
+        return snap
+
+    @app.get("/api/tasks/{task_id}/stream")
+    async def task_stream(task_id: str) -> StreamingResponse:
+        runner: TaskRunner = app.state.runner
+        q = runner.subscribe(task_id)
+        if q is None:
+            raise HTTPException(status_code=404, detail="task not found")
+
+        async def event_gen():
+            while True:
+                # blocking queue read moved off the event loop
+                event = await asyncio.to_thread(q.get)
+                if event is None:  # sentinel: stream over
+                    break
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                if event["type"] in {"task_end", "error"}:
+                    break
+
+        return StreamingResponse(
+            event_gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
 
     return app
 

@@ -324,3 +324,264 @@ body {
   padding: 16px;
   text-align: center;
 }
+
+/* ---- mode tabs ---- */
+.mode-tabs {
+  display: flex;
+  gap: 4px;
+  margin-left: 14px;
+}
+
+.mode-tabs button {
+  background: var(--chip);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 8px;
+  padding: 4px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.mode-tabs button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ---- task panel ---- */
+.task-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.task-composer {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.task-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.task-composer form {
+  display: flex;
+  gap: 10px;
+}
+
+.task-composer input {
+  flex: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 10px 14px;
+  font-size: 14px;
+  outline: none;
+}
+
+.task-composer input:focus {
+  border-color: var(--accent);
+}
+
+.task-composer input:disabled {
+  opacity: 0.6;
+}
+
+.task-composer button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  font-weight: 600;
+  border-radius: 10px;
+  padding: 0 22px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.task-composer button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.task-composer .btn-stop {
+  background: var(--chip);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.task-stream {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.step {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  padding: 10px 14px;
+  animation: step-in 0.25s ease;
+}
+
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.step-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  text-transform: none;
+}
+
+.step-title code {
+  background: var(--chip);
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
+.step-body {
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.step-args {
+  margin: 6px 0 0;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  overflow-x: auto;
+  color: var(--text-dim);
+}
+
+.step-start {
+  border-left: 3px solid var(--accent);
+}
+
+.step-thought {
+  border-left: 3px solid var(--accent-2);
+}
+
+.step-toolcall {
+  border-left: 3px solid #fbbf24;
+}
+
+.step-toolresult {
+  border-left: 3px solid var(--ok);
+  background: var(--panel);
+}
+
+.step-final {
+  border-left: 3px solid var(--ok);
+  background: rgba(74, 222, 128, 0.06);
+}
+
+.step-error {
+  border-left: 3px solid var(--err);
+  background: rgba(248, 113, 113, 0.06);
+}
+
+.step-markdown {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.step-markdown h1,
+.step-markdown h2,
+.step-markdown h3 {
+  font-size: 15px;
+  margin: 10px 0 6px;
+}
+
+.step-markdown p {
+  margin: 6px 0;
+}
+
+.step-markdown code {
+  background: var(--chip);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.step-markdown pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  overflow-x: auto;
+}
+
+.step-markdown pre code {
+  background: none;
+  padding: 0;
+}
+
+.step-markdown ul,
+.step-markdown ol {
+  padding-left: 20px;
+  margin: 6px 0;
+}
+
+.task-running {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 8px 4px;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.task-done-banner {
+  color: var(--ok);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 4px;
+}
+
+.task-done-banner.err {
+  color: var(--err);
+}

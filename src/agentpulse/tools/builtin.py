@@ -49,9 +49,27 @@ def _make_memory_tools(memory: LongTermMemory) -> list:
     return [remember, recall, list_memories]
 
 
-def register_builtins(registry: ToolRegistry, memory: LongTermMemory) -> None:
-    """Register the built-in toolset into a registry, wiring memory tools."""
+def register_builtins(
+    registry: ToolRegistry,
+    memory: LongTermMemory,
+    *,
+    sandbox_dir: str | None = None,
+) -> None:
+    """Register the built-in toolset into a registry, wiring memory tools.
+
+    Args:
+        registry: target registry.
+        memory: long-term memory the remember/recall tools bind to.
+        sandbox_dir: optional sandbox root for filesystem tools
+            (read_file / write_file / list_files). When None, fs tools are
+            not registered.
+    """
     registry.register(get_current_time)
     registry.register(add)
     for fn in _make_memory_tools(memory):
         registry.register(fn)
+    if sandbox_dir is not None:
+        from .fs import make_fs_tools
+
+        for fn in make_fs_tools(sandbox_dir):
+            registry.register(fn)

@@ -36,3 +36,41 @@ export interface StateResponse {
   memories: MemoryRow[]
   model: string
 }
+
+// ---- task mode -------------------------------------------------------------
+
+export type TaskEventType =
+  | 'task_start'
+  | 'thought'
+  | 'tool_call'
+  | 'tool_result'
+  | 'task_end'
+  | 'error'
+
+export interface TaskEvent {
+  task_id: string
+  type: TaskEventType
+  data: {
+    objective?: string
+    model?: string
+    content?: string
+    step?: number
+    name?: string
+    args?: Record<string, unknown>
+    reply?: string
+    steps?: number
+    message?: string
+    [k: string]: unknown
+  }
+  ts: string
+}
+
+export interface TaskSnapshot {
+  task_id: string
+  objective: string
+  model: string
+  status: 'running' | 'done' | 'error'
+  created_at: string
+  error: string | null
+  events: TaskEvent[]
+}

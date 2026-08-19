@@ -16,7 +16,7 @@ class FakeHarness:
     """Minimal stand-in exposing only the interface api.py relies on."""
 
     def __init__(self) -> None:
-        self.settings = SimpleNamespace(model="fake-model")
+        self.settings = SimpleNamespace(model="fake-model", max_steps=5, verbose=False)
         self.last_steps = 0
         self.last_trace: list[dict] = []
         self._transcript: list[dict] = []

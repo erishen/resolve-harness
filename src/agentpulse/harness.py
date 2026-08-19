@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Any, Callable
 
 from .config import Settings
@@ -50,6 +51,7 @@ class Harness:
         memory_scope: str = "default",
         short_term_max: int = 40,
         register_builtin_tools: bool = True,
+        sandbox_dir: str | None = None,
         verbose: bool | None = None,
     ) -> None:
         # Settings: explicit args win over .env, which wins over defaults.
@@ -73,7 +75,10 @@ class Harness:
 
         self.tools = ToolRegistry()
         if register_builtin_tools:
-            register_builtins(self.tools, self.long_term)
+            if sandbox_dir is None:
+                sandbox_dir = str(Path(__file__).resolve().parents[2] / "data" / "sandbox")
+            register_builtins(self.tools, self.long_term, sandbox_dir=sandbox_dir)
+        self.sandbox_dir = sandbox_dir
 
         self._loop = build_loop(
             self.router,
