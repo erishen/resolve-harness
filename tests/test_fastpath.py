@@ -7,6 +7,15 @@ import pytest
 from agentpulse.fastpath import try_fast_answer
 
 
+@pytest.fixture(autouse=True)
+def _isolate_plugins(tmp_path, monkeypatch):
+    """Point the plugin dir at a temp (empty) folder so real runtime-generated
+    plugins (e.g. the reversal detector) can't leak into these unit tests."""
+    from agentpulse import codegen
+
+    monkeypatch.setattr(codegen, "default_plugin_dir", lambda: tmp_path / "empty-plugins")
+
+
 class TestArithmetic:
     @pytest.mark.parametrize(
         "query,expected_value",

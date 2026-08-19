@@ -13,6 +13,7 @@
 #   make env        # create .env from template (never overwrites)
 #   make clean      # remove caches only
 #   make clean-data # ALSO delete long-term memory DB (data/) — irreversible
+#   make clean-plugins # clear codegen fast-path plugins (regenerated on demand)
 #
 # Web UI (make dev, or two terminals):
 #   terminal 1: make api
@@ -22,7 +23,7 @@
 UV ?= uv
 PNPM ?= pnpm
 
-.PHONY: help install test chat demo dev api web-dev web-build env clean clean-data
+.PHONY: help install test chat demo dev api web-dev web-build env clean clean-data clean-plugins
 
 help: ## 显示所有可用命令
 	@echo "Usage: make <target>"
@@ -64,3 +65,7 @@ clean: ## 清理缓存（__pycache__ / .pytest_cache）
 clean-data: ## ⚠️ 删除长期记忆 SQLite（data/，不可恢复）
 	rm -rf data
 	@echo "long-term memory deleted"
+
+clean-plugins: ## ⚠️ 清空 codegen 生成的 fast-path 插件（下次重新生成）
+	rm -rf data/fastpath_plugins
+	@echo "fast-path plugins cleared (codegen will regenerate as needed)"

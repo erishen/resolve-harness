@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import ast
 import concurrent.futures
+import hashlib
 import math
 import re
-import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -246,8 +246,17 @@ def default_plugin_dir() -> Path:
     return Path.cwd() / "data" / "fastpath_plugins"
 
 
-def save_plugin(source: str, plugin_dir: str | Path | None = None) -> str:
-    """Persist a validated detector source as a plugin file. Returns its name."""
+def save_plugin(
+    source: str,
+    plugin_dir: str | Path | None = None,
+    trigger: str | None = None,
+) -> str:
+    """Persist a validated detector source as a plugin file. Returns its name.
+
+    The filename is a hash of the source, so identical detectors dedupe to a
+    single file (idempotent — re-saving is a no-op). An optional trigger
+    query is written as a header comment so the plugin stays human-readable.
+    """
     # validate before persisting — never write unsafe code to disk
     try:
         tree = ast.parse(source, mode="exec")
@@ -257,8 +266,17 @@ def save_plugin(source: str, plugin_dir: str | Path | None = None) -> str:
 
     directory = Path(plugin_dir) if plugin_dir else default_plugin_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    name = f"gen_{uuid.uuid4().hex[:8]}"
-    (directory / f"{name}.py").write_text(source, encoding="utf-8")
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()[:10]
+    name = f"gen_{digest}"
+    target = directory / f"{name}.py"
+    if target.exists():
+        return name  # already persisted — dedupe
+
+    body = source
+    if trigger:
+        one_line = " ".join(trigger.split())[:80]
+        body = f"# trigger: {one_line}\n{source}"
+    target.write_text(body, encoding="utf-8")
     return name
 
 
@@ -376,7 +394,7 @@ def codegen_solve(
         answer = run_detector(source, query)
         if answer is not None:
             try:
-                save_plugin(source, plugin_dir)
+                save_plugin(source, plugin_dir, trigger=query)
             except CodeGenError:
                 pass  # answer stands even if persistence is refused
             return answer

@@ -97,6 +97,23 @@ class TestPersistence:
         assert detectors[0]("测试一下") == "ok"
         assert detectors[0]("别的") is None
 
+    def test_save_dedupes_identical_source(self, tmp_path) -> None:
+        source = "def detect(t):\n    return 'same'"
+        n1 = save_plugin(source, tmp_path, trigger="第一次")
+        n2 = save_plugin(source, tmp_path, trigger="第二次")
+        assert n1 == n2  # hash-named: same source -> same file
+        assert len(list(tmp_path.glob("gen_*.py"))) == 1
+        # trigger comment from first save only (second was a no-op)
+        content = (tmp_path / f"{n1}.py").read_text(encoding="utf-8")
+        assert "trigger: 第一次" in content
+        assert "trigger: 第二次" not in content
+
+    def test_save_different_source_different_file(self, tmp_path) -> None:
+        n1 = save_plugin("def detect(t):\n    return 'a'", tmp_path)
+        n2 = save_plugin("def detect(t):\n    return 'b'", tmp_path)
+        assert n1 != n2
+        assert len(list(tmp_path.glob("gen_*.py"))) == 2
+
     def test_save_refuses_unsafe(self, tmp_path) -> None:
         with pytest.raises(CodeGenError):
             save_plugin("import os\ndef detect(t):\n    return 'x'", tmp_path)
