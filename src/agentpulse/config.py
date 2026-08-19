@@ -12,6 +12,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# litellm tries to fetch its model-cost map from GitHub at import time, which
+# can stall server startup by ~15s on slow/flaky networks (SSL timeout).
+# Prefer the bundled local copy — must be set before `import litellm`.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 
 def _find_project_root() -> Path:
     """Walk up from this file to the directory containing pyproject.toml."""

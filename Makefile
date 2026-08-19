@@ -6,14 +6,15 @@
 #   make test       # run offline unit tests
 #   make chat       # interactive REPL (terminal)
 #   make demo       # scripted tool demo
-#   make api        # start FastAPI backend on :8000
-#   make web-dev    # start Vite dev server on :5173 (needs `cd web && pnpm install` first)
+#   make dev        # ONE-SHOT: clean :8000/:5173 -> backend first -> frontend
+#   make api        # start FastAPI backend on :8000 only
+#   make web-dev    # start Vite dev server on :5173 only (needs `cd web && pnpm install` first)
 #   make web-build  # build frontend to web/dist
 #   make env        # create .env from template (never overwrites)
 #   make clean      # remove caches only
 #   make clean-data # ALSO delete long-term memory DB (data/) — irreversible
 #
-# Web UI (two terminals):
+# Web UI (make dev, or two terminals):
 #   terminal 1: make api
 #   terminal 2: make web-dev   -> open http://localhost:5173
 # ===========================================================================
@@ -21,7 +22,7 @@
 UV ?= uv
 PNPM ?= pnpm
 
-.PHONY: help install test chat demo api web-dev web-build env clean clean-data
+.PHONY: help install test chat demo dev api web-dev web-build env clean clean-data
 
 help: ## 显示所有可用命令
 	@echo "Usage: make <target>"
@@ -39,6 +40,9 @@ chat: ## 交互式对话（REPL）
 
 demo: ## 脚本演示：时间 / 计算 / 记忆
 	$(UV) run python examples/tool_demo.py
+
+dev: ## 一键启动前后端：先清理 :8000/:5173 残留，后端先起、健康检查通过后再起前端，Ctrl-C 全部停止
+	@bash scripts/dev.sh
 
 api: ## 启动 FastAPI 后端（http://127.0.0.1:8000，文档 /docs）
 	$(UV) run uvicorn agentpulse.api:app --reload --port 8000

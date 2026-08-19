@@ -28,7 +28,15 @@ uv run python examples/tool_demo.py   # 脚本演示：时间/计算/记忆
 
 ### Web UI（Vite + React）
 
-两个终端分别起后端和前端：
+一键启动前后端（推荐）：
+
+```bash
+make dev
+```
+
+`make dev` 会：① 先清理占用 `:8000` / `:5173` 的残留进程 → ② 启动 FastAPI 后端并等健康检查通过 → ③ 再启动 Vite 前端 → 打开 http://localhost:5173。Ctrl-C 一次停止两者。
+
+也可以分两个终端手动起：
 
 ```bash
 # 终端 1：FastAPI 后端（http://127.0.0.1:8000，交互文档在 /docs）
@@ -39,7 +47,7 @@ cd web && pnpm install        # 首次
 make web-dev
 ```
 
-打开 http://localhost:5173 即可聊天。前端展示 agent 每次的工具调用（回复下方的小标签），右侧栏实时列出长期记忆（可删除），顶部「清空会话」重置短期记忆。Vite dev 已配置 `/api` 代理到后端，无需处理 CORS。
+前端展示 agent 每次的工具调用（回复下方的小标签），右侧栏实时列出长期记忆（可删除），顶部「清空会话」重置短期记忆。Vite dev 已配置 `/api` 代理到后端，无需处理 CORS。
 
 ## 架构
 
