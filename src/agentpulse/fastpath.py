@@ -369,10 +369,16 @@ def _sandbox_read(sandbox_dir: str | None, path: str) -> FastAnswer | None:
 # -- public entry ----------------------------------------------------------------
 
 
-def try_fast_answer(text: str, *, sandbox_dir: str | None = None) -> FastAnswer | None:
+def try_fast_answer(
+    text: str,
+    *,
+    sandbox_dir: str | None = None,
+    plugin_dir: str | None = None,
+) -> FastAnswer | None:
     """Return a FastAnswer when the input is fully resolvable by code, else None.
 
-    Order matters: cheap/high-value matchers run first.
+    Order matters: cheap/high-value matchers run first, then persisted
+    runtime-generated plugins (from `data/fastpath_plugins/`).
     """
     if not text or not text.strip():
         return None
@@ -401,4 +407,18 @@ def try_fast_answer(text: str, *, sandbox_dir: str | None = None) -> FastAnswer 
         result = _sandbox_read(sandbox_dir, m.group(1))
         if result is not None:
             return result
+
+    # runtime-generated plugins (agent bootstrapped its own fast path)
+    try:
+        from .codegen import load_plugins
+
+        for detect in load_plugins(plugin_dir):
+            try:
+                answer = detect(text)
+            except Exception:  # noqa: BLE001 - a broken plugin must not kill the flow
+                continue
+            if isinstance(answer, str) and answer.strip():
+                return FastAnswer(text, "plugin", answer.strip(), answer.strip()[:200])
+    except Exception:  # noqa: BLE001
+        pass
     return None

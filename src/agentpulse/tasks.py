@@ -103,12 +103,16 @@ class TaskRunner:
         language: str = "zh",
         max_steps: int | None = None,
         max_replan_rounds: int = MAX_REPLAN_ROUNDS,
+        plugin_dir: str | None = None,
+        codegen: bool = True,
     ) -> None:
         self.harness = harness
         self.router: LiteLLMRouter = harness.router
         self.language = language
         self.max_steps = max_steps or harness.settings.max_steps
         self.max_replan_rounds = max_replan_rounds
+        self.plugin_dir = plugin_dir  # None -> data/fastpath_plugins
+        self.codegen = codegen  # allow tests to pin the codegen step off
         self._planner = Planner(self.router, language=language)
         self._evaluator = Evaluator(self.router, language=language)
         self._records: dict[str, TaskRecord] = {}
@@ -166,47 +170,28 @@ class TaskRunner:
             self._emit(record, "task_start", {"objective": record.objective, "model": record.model})
             objective = record.objective
 
-            # Fast path: deterministic queries (arithmetic / time) are resolved
-            # by code — no Planner/Specialist/Evaluator LLM round-trips at all.
+            # Fast path: deterministic queries (arithmetic / time / conversions…)
+            # are resolved by code — no Planner/Specialist/Evaluator LLM at all.
             from .fastpath import try_fast_answer
 
-            fast = try_fast_answer(objective, sandbox_dir=self.harness.sandbox_dir)
+            fast = try_fast_answer(
+                objective,
+                sandbox_dir=self.harness.sandbox_dir,
+                plugin_dir=self.plugin_dir,
+            )
             if fast is not None:
-                self._emit(
-                    record,
-                    "plan",
-                    {
-                        "objective": objective,
-                        "subtasks": [
-                            {
-                                "index": 0,
-                                "title": f"直接计算（{fast.method}，无需模型）",
-                                "instruction": objective,
-                                "artifacts": [],
-                            }
-                        ],
-                        "round": 0,
-                    },
-                )
-                self._emit(record, "subtask_start", {"index": 0, "title": "代码直接计算", "total": 1})
-                self._emit(
-                    record,
-                    "tool_result",
-                    {"name": fast.method, "content": fast.detail, "step": 1, "subtask": 0},
-                )
-                self._emit(record, "subtask_done", {"index": 0, "title": "代码直接计算", "summary": fast.answer})
-                self._emit(
-                    record,
-                    "evaluation",
-                    {"passed": True, "score": 100, "feedback": "确定性计算由代码直接完成，零模型调用", "missing": []},
-                )
-                self._emit(
-                    record,
-                    "task_end",
-                    {"reply": fast.answer, "passed": True, "score": 100, "rounds": 1},
-                )
-                record.status = "done"
+                self._emit_fast_result(record, objective, fast.method, fast.answer, fast.detail)
                 return
+
+            # Codegen: ask the LLM once whether this can be solved by a generated
+            # detector; on success the detector is persisted and reused forever.
+            if self.codegen:
+                from .codegen import codegen_solve
+
+                gen_answer = codegen_solve(self.router, objective, plugin_dir=self.plugin_dir)
+                if gen_answer is not None:
+                    self._emit_fast_result(record, objective, "codegen", gen_answer, gen_answer[:200])
+                    return
 
             for round_no in range(self.max_replan_rounds + 1):
                 plan = self._planner.plan(objective)
@@ -289,6 +274,43 @@ class TaskRunner:
             results.append({"index": i, "title": st["title"], "summary": summary})
             self._emit(record, "subtask_done", {"index": i, "title": st["title"], "summary": summary})
         return results
+
+    def _emit_fast_result(
+        self,
+        record: TaskRecord,
+        objective: str,
+        method: str,
+        answer: str,
+        detail: str,
+    ) -> None:
+        """Emit a complete task tree for a code-resolved answer (no LLM loop)."""
+        label = {
+            "codegen": "代码生成解决（检测器已持久化，下次零模型）",
+            "plugin": "插件命中（此前生成的检测器）",
+        }.get(method, "代码直接计算（无需模型）")
+        self._emit(
+            record,
+            "plan",
+            {
+                "objective": objective,
+                "subtasks": [{"index": 0, "title": label, "instruction": objective, "artifacts": []}],
+                "round": 0,
+            },
+        )
+        self._emit(record, "subtask_start", {"index": 0, "title": label, "total": 1})
+        self._emit(
+            record,
+            "tool_result",
+            {"name": method, "content": detail, "step": 1, "subtask": 0},
+        )
+        self._emit(record, "subtask_done", {"index": 0, "title": label, "summary": answer})
+        self._emit(
+            record,
+            "evaluation",
+            {"passed": True, "score": 100, "feedback": "由代码直接完成，零模型调用", "missing": []},
+        )
+        self._emit(record, "task_end", {"reply": answer, "passed": True, "score": 100, "rounds": 1})
+        record.status = "done"
 
     def _compose_deliverable(
         self,

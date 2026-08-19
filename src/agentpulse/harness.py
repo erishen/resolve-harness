@@ -134,6 +134,20 @@ class Harness:
             self.last_steps = 1
             return fast.answer
 
+        # codegen: let the model write a detector once; persist on success
+        from .codegen import codegen_solve
+
+        gen_answer = codegen_solve(self.router, text)
+        if gen_answer is not None:
+            self.short_term.add("user", text)
+            self.short_term.add("assistant", gen_answer)
+            self.last_trace = [
+                {"kind": "tool_call", "name": "codegen", "args": {}},
+                {"kind": "tool_result", "name": "codegen", "content": gen_answer[:200]},
+            ]
+            self.last_steps = 1
+            return gen_answer
+
         self.short_term.add("user", text)
 
         history = self.short_term.as_list()

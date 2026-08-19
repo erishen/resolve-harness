@@ -121,7 +121,7 @@ class TestOrchestration:
             answer("# 交付\n任务完成"),
         ]
         h = make_harness(script)
-        runner = TaskRunner(h)
+        runner = TaskRunner(h, codegen=False)
         task_id = runner.start("完成一个计算并保存")
         events = drain(task_id, runner)
         types = types_of(events)
@@ -156,7 +156,7 @@ class TestOrchestration:
             answer("# 最终报告\n含结论"),
         ]
         h = make_harness(script)
-        runner = TaskRunner(h, max_replan_rounds=2)
+        runner = TaskRunner(h, max_replan_rounds=2, codegen=False)
         task_id = runner.start("写一份带结论的报告")
         events = drain(task_id, runner)
         types = types_of(events)
@@ -181,7 +181,7 @@ class TestOrchestration:
             answer("# ok"),
         ]
         h = make_harness(script)
-        runner = TaskRunner(h)
+        runner = TaskRunner(h, codegen=False)
         task_id = runner.start("写一个文件")
         events = drain(task_id, runner)
         results = [e["data"]["content"] for e in events if e["type"] == "tool_result"]
@@ -198,7 +198,7 @@ class TestOrchestration:
             answer("# deliverable"),
         ]
         h = make_harness(script)
-        runner = TaskRunner(h)
+        runner = TaskRunner(h, codegen=False)
         task_id = runner.start("简单任务")
         drain(task_id, runner)
         events = drain(task_id, runner)  # subscribe after finish
@@ -209,7 +209,7 @@ class TestOrchestration:
         """Deterministic objective short-circuits: the FakeRouter is never
         called — pure code answers "计算 2+3" in milliseconds."""
         h = make_harness([])  # empty script: any LLM call would yield an error event
-        runner = TaskRunner(h)
+        runner = TaskRunner(h, codegen=False)
         task_id = runner.start("计算 2+3")
         events = drain(task_id, runner)
         types = types_of(events)
@@ -231,7 +231,7 @@ class TestOrchestration:
 
         h = make_harness([])
         h.router = BoomRouter([])
-        runner = TaskRunner(h, max_steps=3)
+        runner = TaskRunner(h, max_steps=3, codegen=False)
         task_id = runner.start("会失败的任务")
         events = drain(task_id, runner)
         assert events[-1]["type"] == "error"
@@ -249,7 +249,7 @@ class TestTaskApi:
             answer("# 交付"),
         ]
         h = make_harness(script)
-        return TestClient(create_app(harness=h, runner=TaskRunner(h, max_steps=4)))
+        return TestClient(create_app(harness=h, runner=TaskRunner(h, max_steps=4, codegen=False)))
 
     def test_create_and_snapshot(self) -> None:
         client = self._client()
