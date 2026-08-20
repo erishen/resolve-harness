@@ -213,10 +213,10 @@ def _register_plugin_routes(app: FastAPI) -> None:
         return {"ok": True, "promoted": promoted, "file": "src/agentpulse/generated_detectors.py"}
 
     @app.get("/api/examples")
-    def examples(force: bool = Query(default=False)) -> dict[str, Any]:
+    def examples() -> dict[str, Any]:
         from .examples import generate_examples
 
-        return {"examples": generate_examples(app.state.harness, force=force)}
+        return {"examples": generate_examples()}
 
 
 app = create_app()

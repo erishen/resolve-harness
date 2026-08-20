@@ -404,57 +404,6 @@ body {
   text-overflow: ellipsis;
 }
 
-.ex-regen {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: linear-gradient(135deg, rgba(108, 140, 255, 0.14), rgba(157, 108, 255, 0.14));
-  border: 1px solid rgba(108, 140, 255, 0.45);
-  color: var(--accent);
-  border-radius: 999px;
-  padding: 5px 14px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-
-.ex-regen:hover:not(:disabled) {
-  background: linear-gradient(135deg, rgba(108, 140, 255, 0.24), rgba(157, 108, 255, 0.24));
-  border-color: var(--accent);
-}
-
-.ex-regen:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.ex-regen .spinner {
-  width: 11px;
-  height: 11px;
-}
-
-.ex-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.ex-group-label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  color: var(--text-dim);
-  text-transform: uppercase;
-}
-
-.ex-spark {
-  font-size: 12px;
-}
-
 .ex-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
@@ -490,16 +439,6 @@ body {
   cursor: not-allowed;
 }
 
-.ex-card.personal {
-  border-color: rgba(157, 108, 255, 0.35);
-  background: linear-gradient(135deg, rgba(157, 108, 255, 0.09), rgba(108, 140, 255, 0.05));
-}
-
-.ex-card.personal:hover:not(:disabled) {
-  border-color: var(--accent-2);
-  background: linear-gradient(135deg, rgba(157, 108, 255, 0.18), rgba(108, 140, 255, 0.1));
-}
-
 .ex-card-label {
   display: inline-flex;
   align-items: center;
@@ -516,10 +455,6 @@ body {
   border-radius: 50%;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   flex-shrink: 0;
-}
-
-.ex-card.personal .ex-card-label::before {
-  background: linear-gradient(135deg, var(--accent-2), #e06cff);
 }
 
 .ex-card-text {

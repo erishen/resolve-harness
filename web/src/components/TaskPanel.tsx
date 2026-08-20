@@ -11,7 +11,6 @@ const FALLBACK_EXAMPLES: { label: string; text: string; source: string }[] = [
   { label: '多步计算', text: '计算 (23+45) 和 (67+89)，并告诉我哪个结果更大', source: 'builtin' },
   { label: '写文档', text: '写一份 150 字左右的 RAG 技术简介，保存为沙箱文件 rag-intro.md', source: 'builtin' },
   { label: '小项目', text: '创建一个小型 Python 项目：README.md 写项目说明，hello.py 写一个打印问候的脚本', source: 'builtin' },
-  { label: '记忆', text: '记住我的偏好：我喜欢用暗色主题；然后告诉我你记住了什么', source: 'builtin' },
   { label: '代码+文档', text: '写一个 Python 快速排序函数保存为 quicksort.py，并写 100 字使用说明保存为 quicksort-notes.md', source: 'builtin' },
 ]
 
@@ -116,21 +115,17 @@ export default function TaskPanel({ onMemoryChange }: Props) {
   const [error, setError] = useState('')
   const [model, setModel] = useState('')
   const [examples, setExamples] = useState<{ label: string; text: string; source?: string }[]>([])
-  const [examplesLoading, setExamplesLoading] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const esRef = useRef<EventSource | null>(null)
 
-  const loadExamples = useCallback(async (force = false) => {
-    setExamplesLoading(true)
+  const loadExamples = useCallback(async () => {
     try {
-      const { examples } = await api.examples(force)
+      const { examples } = await api.examples()
       setExamples(examples.length > 0 ? examples : FALLBACK_EXAMPLES)
     } catch {
       /* backend down — keep the built-in set so the UI never looks empty */
       setExamples(FALLBACK_EXAMPLES)
-    } finally {
-      setExamplesLoading(false)
     }
   }, [])
 
@@ -199,9 +194,6 @@ export default function TaskPanel({ onMemoryChange }: Props) {
 
   const busy = state === 'running'
 
-  const builtin = examples.filter((e) => e.source !== 'personalized')
-  const personalized = examples.filter((e) => e.source === 'personalized')
-
   const pickExample = (text: string) => {
     setObjective(text)
     inputRef.current?.focus()
@@ -219,64 +211,22 @@ export default function TaskPanel({ onMemoryChange }: Props) {
               <span className="ex-title-main">示例任务</span>
               <span className="ex-title-sub">点卡片填入目标，再点运行</span>
             </div>
-            <button
-              type="button"
-              className="ex-regen"
-              disabled={busy || examplesLoading}
-              title="根据长期记忆偏好重新生成示例"
-              onClick={() => void loadExamples(true)}
-            >
-              {examplesLoading ? (
-                <>
-                  <span className="spinner" /> 生成中…
-                </>
-              ) : (
-                <>🪄 按记忆重新生成</>
-              )}
-            </button>
           </div>
 
-          {builtin.length > 0 && (
-            <div className="ex-group">
-              <div className="ex-group-label">快速开始</div>
-              <div className="ex-grid">
-                {builtin.map((ex) => (
-                  <button
-                    key={`${ex.label}:${ex.text.slice(0, 12)}`}
-                    type="button"
-                    className="ex-card"
-                    disabled={busy}
-                    onClick={() => pickExample(ex.text)}
-                  >
-                    <span className="ex-card-label">{ex.label}</span>
-                    <span className="ex-card-text">{ex.text}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {personalized.length > 0 && (
-            <div className="ex-group">
-              <div className="ex-group-label">
-                <span className="ex-spark">✨</span> 为你生成 · 基于长期记忆
-              </div>
-              <div className="ex-grid">
-                {personalized.map((ex) => (
-                  <button
-                    key={`${ex.label}:${ex.text.slice(0, 12)}`}
-                    type="button"
-                    className="ex-card personal"
-                    disabled={busy}
-                    onClick={() => pickExample(ex.text)}
-                  >
-                    <span className="ex-card-label">{ex.label}</span>
-                    <span className="ex-card-text">{ex.text}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          <div className="ex-grid">
+            {examples.map((ex) => (
+              <button
+                key={`${ex.label}:${ex.text.slice(0, 12)}`}
+                type="button"
+                className="ex-card"
+                disabled={busy}
+                onClick={() => pickExample(ex.text)}
+              >
+                <span className="ex-card-label">{ex.label}</span>
+                <span className="ex-card-text">{ex.text}</span>
+              </button>
+            ))}
+          </div>
         </div>
         <form
           onSubmit={(e) => {

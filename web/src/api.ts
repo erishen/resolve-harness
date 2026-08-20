@@ -51,8 +51,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ names }),
     }),
-  examples: (force = false) =>
-    request<{ examples: ExampleItem[] }>(`/examples${force ? '?force=1' : ''}`),
+  examples: () => request<{ examples: ExampleItem[] }>('/examples'),
 }
 
 // transcript items -> ChatMessage (group consecutive tool traces into the reply)
