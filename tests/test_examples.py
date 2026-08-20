@@ -66,12 +66,12 @@ class TestExamples:
     def test_force_regenerates(self) -> None:
         h = Harness(memory_db=":memory:")
         h.remember("theme", "暗色主题")
-        h.router = Router('[{"label": "A", "text": "任务 A"}]')
+        h.router = Router('[{"label": "暗色页面", "text": "创建暗色主题 HTML 页面保存为 dark.html"}]')
         first = generate_examples(h)
-        h.router.payload = '[{"label": "B", "text": "任务 B"}]'
+        h.router.payload = '[{"label": "配色报告", "text": "计算五组颜色在深色背景上的对比度并输出报告"}]'
         second = generate_examples(h, force=True)
         assert h.router.calls == 2
-        assert second[-1]["label"] == "B"
+        assert second[-1]["label"] == "配色报告"
 
     def test_bad_model_output_falls_back_to_builtin(self) -> None:
         h = Harness(memory_db=":memory:")
@@ -79,3 +79,30 @@ class TestExamples:
         h.router = Router("这完全不是 JSON")
         result = generate_examples(h)
         assert result == BUILTIN_EXAMPLES  # graceful fallback
+
+    def test_rejects_root_paths_keeps_good_items(self) -> None:
+        """Unresolvable absolute paths (e.g. /app/config/editor.json) are dropped;
+        resolvable items in the same batch survive."""
+        h = Harness(memory_db=":memory:")
+        h.remember("theme", "暗色主题")
+        h.router = Router(
+            '[{"label": "改配置", "text": "将 /app/config/editor.json 中所有 theme 字段改为 dark"},'
+            '{"label": "暗色页面", "text": "创建暗色主题的 HTML 页面 dark.html，包含标题、说明文字和一个表格，保存到沙箱"}]'
+        )
+        result = generate_examples(h)
+        assert h.router.calls == 1  # at least one good item -> no retry needed
+        texts = [e["text"] for e in result]
+        assert "dark.html" in texts[-1]
+        assert not any("editor.json" in t for t in texts)
+        assert len(result) == len(BUILTIN_EXAMPLES) + 1
+
+    def test_all_bad_retries_then_falls_back(self) -> None:
+        h = Harness(memory_db=":memory:")
+        h.remember("x", "y")
+        h.router = Router(
+            '[{"label": "改配置", "text": "将 /app/config/editor.json 的 theme 改为 dark"},'
+            '{"label": "Temp", "text": "读取 /tmp/data.csv 并统计"}]'
+        )
+        result = generate_examples(h)
+        assert result == BUILTIN_EXAMPLES
+        assert h.router.calls == 2  # one retry before giving up
