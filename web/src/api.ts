@@ -4,6 +4,7 @@ import type {
   ExampleItem,
   MemoryRow,
   PluginItem,
+  SandboxFile,
   StateResponse,
   TaskSnapshot,
   TranscriptItem,
@@ -54,6 +55,11 @@ export const api = {
   examples: () => request<{ examples: ExampleItem[] }>('/examples'),
   regenerateExamples: () =>
     request<{ examples: ExampleItem[] }>('/examples/regenerate', { method: 'POST' }),
+  sandbox: () => request<{ files: SandboxFile[]; sandbox_dir: string | null }>('/sandbox'),
+  sandboxFile: (path: string) =>
+    request<{ path: string; content: string; size: number }>(
+      `/sandbox/content?path=${encodeURIComponent(path)}`,
+    ),
 }
 
 // transcript items -> ChatMessage (group consecutive tool traces into the reply)

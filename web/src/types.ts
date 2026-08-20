@@ -113,3 +113,10 @@ export interface ExampleItem {
   text: string
   source?: 'builtin' | 'generated'
 }
+
+export interface SandboxFile {
+  path: string
+  size: number
+  mtime: number
+  is_text: boolean
+}

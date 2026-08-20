@@ -3,6 +3,7 @@ LLM / network is involved."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -133,3 +134,33 @@ class TestApi:
         # built-ins are preserved, plus at least one model-generated task
         assert any(e["source"] == "builtin" for e in examples)
         assert any(e["source"] == "generated" for e in examples)
+
+
+class TestSandbox:
+    def _app_with_sandbox(self, tmp_path: Path) -> TestClient:
+        h = FakeHarness()
+        h.sandbox_dir = str(tmp_path)
+        return TestClient(create_app(harness=h))
+
+    def test_list_empty(self, client: TestClient) -> None:
+        res = client.get("/api/sandbox")
+        assert res.status_code == 200
+        assert res.json()["files"] == []
+
+    def test_list_and_read(self, tmp_path: Path) -> None:
+        (tmp_path / "notes.md").write_text("hello sandbox", encoding="utf-8")
+        c = self._app_with_sandbox(tmp_path)
+        res = c.get("/api/sandbox")
+        assert res.status_code == 200
+        files = res.json()["files"]
+        assert len(files) == 1 and files[0]["path"] == "notes.md"
+        assert files[0]["is_text"] is True
+
+        content = c.get("/api/sandbox/content?path=notes.md")
+        assert content.status_code == 200
+        assert content.json()["content"] == "hello sandbox"
+
+    def test_read_blocks_traversal(self, tmp_path: Path) -> None:
+        c = self._app_with_sandbox(tmp_path)
+        res = c.get("/api/sandbox/content?path=../escape.txt")
+        assert res.status_code == 404

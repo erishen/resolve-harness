@@ -3,12 +3,13 @@ import { api, formatValue } from './api'
 import ChatPanel from './components/ChatPanel'
 import PluginPanel from './components/PluginPanel'
 import TaskPanel from './components/TaskPanel'
+import SandboxPanel from './components/SandboxPanel'
 import type { MemoryRow } from './types'
 
-type Mode = 'chat' | 'task' | 'plugins'
+type Mode = 'task' | 'chat' | 'plugins' | 'sandbox'
 
 export default function App() {
-  const [mode, setMode] = useState<Mode>('chat')
+  const [mode, setMode] = useState<Mode>('task')
   const [memories, setMemories] = useState<MemoryRow[]>([])
   const [online, setOnline] = useState(false)
   const [model, setModel] = useState('')
@@ -68,16 +69,16 @@ export default function App() {
           </span>
           <nav className="mode-tabs">
             <button
-              className={mode === 'chat' ? 'active' : ''}
-              onClick={() => setMode('chat')}
-            >
-              聊天
-            </button>
-            <button
               className={mode === 'task' ? 'active' : ''}
               onClick={() => setMode('task')}
             >
               任务
+            </button>
+            <button
+              className={mode === 'chat' ? 'active' : ''}
+              onClick={() => setMode('chat')}
+            >
+              聊天
             </button>
             <button
               className={mode === 'plugins' ? 'active' : ''}
@@ -85,14 +86,22 @@ export default function App() {
             >
               插件
             </button>
+            <button
+              className={mode === 'sandbox' ? 'active' : ''}
+              onClick={() => setMode('sandbox')}
+            >
+              沙箱
+            </button>
           </nav>
           {model && <span className="model-tag">{model}</span>}
         </header>
 
-        {mode === 'chat' ? (
-          <ChatPanel onAfterTurn={() => void loadMemories()} />
-        ) : mode === 'task' ? (
+        {mode === 'task' ? (
           <TaskPanel onMemoryChange={() => void loadMemories()} />
+        ) : mode === 'chat' ? (
+          <ChatPanel onAfterTurn={() => void loadMemories()} />
+        ) : mode === 'sandbox' ? (
+          <SandboxPanel />
         ) : (
           <PluginPanel />
         )}

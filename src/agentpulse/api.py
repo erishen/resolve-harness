@@ -20,6 +20,8 @@ Endpoints:
     GET  /api/tasks                  -> list tasks (snapshots)
     GET  /api/tasks/{id}             -> one task snapshot
     GET  /api/tasks/{id}/stream      -> SSE: task_start/thought/tool_call/tool_result/task_end
+    GET  /api/sandbox                -> list files in the sandbox
+    GET  /api/sandbox/content?path=  -> read a text file from the sandbox
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import queue
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
@@ -187,6 +190,7 @@ def create_app(
         )
 
     _register_plugin_routes(app)
+    _register_sandbox_routes(app)
     return app
 
 
@@ -224,6 +228,51 @@ def _register_plugin_routes(app: FastAPI) -> None:
 
         h: Harness = app.state.harness
         return {"examples": generate_fresh_examples(h, force=True)}
+
+
+# -- sandbox browser (wired into the app factory) -----------------------------
+
+
+_TEXT_SUFFIXES = {
+    ".txt", ".md", ".py", ".js", ".ts", ".tsx", ".jsx", ".json", ".csv", ".yaml",
+    ".yml", ".toml", ".html", ".css", ".sh", ".log", ".rst", ".xml", ".cfg",
+    ".ini", ".env", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".sql",
+}
+
+
+def _register_sandbox_routes(app: FastAPI) -> None:
+    @app.get("/api/sandbox")
+    def sandbox_list() -> dict[str, Any]:
+        h: Harness = app.state.harness
+        base = Path(h.sandbox_dir) if h.sandbox_dir else None
+        files: list[dict[str, Any]] = []
+        if base and base.is_dir():
+            for p in sorted(base.rglob("*")):
+                if not p.is_file():
+                    continue
+                rel = p.relative_to(base).as_posix()
+                st = p.stat()
+                files.append(
+                    {
+                        "path": rel,
+                        "size": st.st_size,
+                        "mtime": int(st.st_mtime),
+                        "is_text": p.suffix.lower() in _TEXT_SUFFIXES,
+                    }
+                )
+        return {"files": files, "sandbox_dir": str(base) if base else None}
+
+    @app.get("/api/sandbox/content")
+    def sandbox_read(path: str = Query(min_length=1)) -> dict[str, Any]:
+        h: Harness = app.state.harness
+        base = Path(h.sandbox_dir) if h.sandbox_dir else None
+        if base is None:
+            raise HTTPException(status_code=404, detail="no sandbox configured")
+        target = (base / path).resolve()
+        if not target.is_relative_to(base) or not target.is_file():
+            raise HTTPException(status_code=404, detail="file not found in sandbox")
+        text = target.read_text(encoding="utf-8", errors="replace")
+        return {"path": path, "content": text, "size": target.stat().st_size}
 
 
 app = create_app()
