@@ -60,6 +60,17 @@ export const api = {
     request<{ path: string; content: string; size: number }>(
       `/sandbox/content?path=${encodeURIComponent(path)}`,
     ),
+  sandboxWrite: (path: string, content: string) =>
+    request<{ path: string; size: number; ok: boolean }>(
+      `/sandbox/content?path=${encodeURIComponent(path)}`,
+      { method: 'PUT', body: JSON.stringify({ content }) },
+    ),
+  sandboxDelete: (path: string) =>
+    request<{ ok: boolean }>(`/sandbox/file?path=${encodeURIComponent(path)}`, {
+      method: 'DELETE',
+    }),
+  sandboxClear: () =>
+    request<{ ok: boolean; deleted: number }>('/sandbox', { method: 'DELETE' }),
 }
 
 // transcript items -> ChatMessage (group consecutive tool traces into the reply)

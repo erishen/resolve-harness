@@ -22,6 +22,9 @@ Endpoints:
     GET  /api/tasks/{id}/stream      -> SSE: task_start/thought/tool_call/tool_result/task_end
     GET  /api/sandbox                -> list files in the sandbox
     GET  /api/sandbox/content?path=  -> read a text file from the sandbox
+    PUT  /api/sandbox/content?path=  -> write/edit a text file in the sandbox
+    DELETE /api/sandbox/file?path=   -> delete a single sandbox file
+    DELETE /api/sandbox              -> clear all sandbox files
 """
 
 from __future__ import annotations
@@ -63,6 +66,10 @@ class TaskCreate(BaseModel):
 
 class PluginPromote(BaseModel):
     names: list[str] = []
+
+
+class SandboxWrite(BaseModel):
+    content: str = ""
 
 
 def create_app(
@@ -273,6 +280,52 @@ def _register_sandbox_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail="file not found in sandbox")
         text = target.read_text(encoding="utf-8", errors="replace")
         return {"path": path, "content": text, "size": target.stat().st_size}
+
+    @app.put("/api/sandbox/content")
+    def sandbox_write(
+        path: str = Query(min_length=1),
+        body: SandboxWrite = ...,
+    ) -> dict[str, Any]:
+        h: Harness = app.state.harness
+        base = Path(h.sandbox_dir) if h.sandbox_dir else None
+        if base is None:
+            raise HTTPException(status_code=404, detail="no sandbox configured")
+        target = (base / path).resolve()
+        if not target.is_relative_to(base):
+            raise HTTPException(status_code=404, detail="file not found in sandbox")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body.content, encoding="utf-8")
+        return {"path": path, "size": target.stat().st_size, "ok": True}
+
+    @app.delete("/api/sandbox/file")
+    def sandbox_delete_file(path: str = Query(min_length=1)) -> dict[str, bool]:
+        h: Harness = app.state.harness
+        base = Path(h.sandbox_dir) if h.sandbox_dir else None
+        if base is None:
+            raise HTTPException(status_code=404, detail="no sandbox configured")
+        target = (base / path).resolve()
+        if not target.is_relative_to(base) or not target.is_file():
+            raise HTTPException(status_code=404, detail="file not found in sandbox")
+        target.unlink()
+        return {"ok": True}
+
+    @app.delete("/api/sandbox")
+    def sandbox_clear() -> dict[str, Any]:
+        h: Harness = app.state.harness
+        base = Path(h.sandbox_dir) if h.sandbox_dir else None
+        if base is None:
+            raise HTTPException(status_code=404, detail="no sandbox configured")
+        deleted = 0
+        for p in sorted(base.rglob("*"), reverse=True):
+            if p.is_file():
+                p.unlink()
+                deleted += 1
+            elif p.is_dir():
+                try:
+                    p.rmdir()  # non-empty dirs are skipped (OSError)
+                except OSError:
+                    pass
+        return {"ok": True, "deleted": deleted}
 
 
 app = create_app()

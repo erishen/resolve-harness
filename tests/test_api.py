@@ -164,3 +164,49 @@ class TestSandbox:
         c = self._app_with_sandbox(tmp_path)
         res = c.get("/api/sandbox/content?path=../escape.txt")
         assert res.status_code == 404
+
+    def test_write_and_read(self, tmp_path: Path) -> None:
+        c = self._app_with_sandbox(tmp_path)
+        put = c.put("/api/sandbox/content?path=notes.md", json={"content": "edited"})
+        assert put.status_code == 200
+        assert put.json()["size"] == len("edited")
+        got = c.get("/api/sandbox/content?path=notes.md")
+        assert got.json()["content"] == "edited"
+
+    def test_write_creates_parent_dir(self, tmp_path: Path) -> None:
+        c = self._app_with_sandbox(tmp_path)
+        res = c.put("/api/sandbox/content?path=sub/deep/x.txt", json={"content": "hi"})
+        assert res.status_code == 200
+        assert (tmp_path / "sub" / "deep" / "x.txt").read_text(encoding="utf-8") == "hi"
+
+    def test_write_blocks_traversal(self, tmp_path: Path) -> None:
+        c = self._app_with_sandbox(tmp_path)
+        res = c.put("/api/sandbox/content?path=../escape.txt", json={"content": "x"})
+        assert res.status_code == 404
+
+    def test_delete_file(self, tmp_path: Path) -> None:
+        c = self._app_with_sandbox(tmp_path)
+        (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+        res = c.delete("/api/sandbox/file?path=a.txt")
+        assert res.status_code == 200 and res.json() == {"ok": True}
+        assert not (tmp_path / "a.txt").exists()
+        assert c.get("/api/sandbox").json()["files"] == []
+
+    def test_delete_missing_is_404(self, tmp_path: Path) -> None:
+        c = self._app_with_sandbox(tmp_path)
+        assert c.delete("/api/sandbox/file?path=nope.txt").status_code == 404
+
+    def test_delete_blocks_traversal(self, tmp_path: Path) -> None:
+        c = self._app_with_sandbox(tmp_path)
+        assert c.delete("/api/sandbox/file?path=../escape.txt").status_code == 404
+
+    def test_clear(self, tmp_path: Path) -> None:
+        c = self._app_with_sandbox(tmp_path)
+        (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+        (tmp_path / "b.txt").write_text("b", encoding="utf-8")
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "sub" / "c.txt").write_text("c", encoding="utf-8")
+        res = c.delete("/api/sandbox")
+        assert res.status_code == 200
+        assert res.json()["deleted"] == 3
+        assert c.get("/api/sandbox").json()["files"] == []

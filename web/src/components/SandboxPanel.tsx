@@ -22,6 +22,11 @@ export default function SandboxPanel() {
   const [error, setError] = useState('')
   const [sandboxDir, setSandboxDir] = useState<string | null>(null)
 
+  // edit mode
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+
   const load = useCallback(async () => {
     try {
       const res = await api.sandbox()
@@ -39,6 +44,8 @@ export default function SandboxPanel() {
 
   const openFile = useCallback(async (file: SandboxFile) => {
     setSelected(file)
+    setEditing(false)
+    setDraft('')
     if (!file.is_text) {
       setContent('')
       return
@@ -55,6 +62,63 @@ export default function SandboxPanel() {
     }
   }, [])
 
+  const startEdit = useCallback(() => {
+    setDraft(content)
+    setEditing(true)
+  }, [content])
+
+  const cancelEdit = useCallback(() => {
+    setEditing(false)
+    setDraft('')
+  }, [])
+
+  const saveEdit = useCallback(async () => {
+    if (!selected) return
+    setSaving(true)
+    try {
+      await api.sandboxWrite(selected.path, draft)
+      setContent(draft)
+      setEditing(false)
+      await load() // refresh size / mtime
+    } catch {
+      setError('保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }, [selected, draft, load])
+
+  const deleteFile = useCallback(
+    async (file: SandboxFile) => {
+      if (!window.confirm(`删除文件 “${file.path}”？此操作不可撤销。`)) return
+      try {
+        await api.sandboxDelete(file.path)
+        if (selected?.path === file.path) {
+          setSelected(null)
+          setContent('')
+          setEditing(false)
+        }
+        await load()
+      } catch {
+        setError('删除失败')
+      }
+    },
+    [selected, load],
+  )
+
+  const clearAll = useCallback(async () => {
+    if (files.length === 0) return
+    if (!window.confirm(`清空沙箱全部 ${files.length} 个文件？此操作不可撤销。`)) return
+    try {
+      await api.sandboxClear()
+      setSelected(null)
+      setContent('')
+      setEditing(false)
+      await load()
+    } catch {
+      setError('清空失败')
+    }
+  }, [files.length, load])
+
   return (
     <div className="sandbox-panel">
       <div className="sandbox-head">
@@ -64,9 +128,19 @@ export default function SandboxPanel() {
             {sandboxDir ? sandboxDir : 'agent 可写的隔离目录'}
           </span>
         </div>
-        <button type="button" className="ex-regen" onClick={() => void load()}>
-          🔄 刷新
-        </button>
+        <div className="sandbox-actions">
+          <button
+            type="button"
+            className="ex-regen danger"
+            onClick={() => void clearAll()}
+            disabled={files.length === 0}
+          >
+            🗑 清空
+          </button>
+          <button type="button" className="ex-regen" onClick={() => void load()}>
+            🔄 刷新
+          </button>
+        </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -77,31 +151,81 @@ export default function SandboxPanel() {
             <div className="empty">沙箱为空 — 运行一个「写文件」任务试试</div>
           )}
           {files.map((f) => (
-            <button
-              type="button"
+            <div
               key={f.path}
               className={`sandbox-item ${selected?.path === f.path ? 'active' : ''}`}
-              onClick={() => void openFile(f)}
             >
-              <span className="sandbox-item-name" title={f.path}>
-                {f.path}
-              </span>
-              <span className="sandbox-item-meta">
-                {formatSize(f.size)} · {formatMtime(f.mtime)}
-              </span>
-            </button>
+              <button type="button" className="sandbox-item-main" onClick={() => void openFile(f)}>
+                <span className="sandbox-item-name" title={f.path}>
+                  {f.path}
+                </span>
+                <span className="sandbox-item-meta">
+                  {formatSize(f.size)} · {formatMtime(f.mtime)}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="sandbox-item-del"
+                title="删除"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void deleteFile(f)
+                }}
+              >
+                ✕
+              </button>
+            </div>
           ))}
         </div>
 
         <div className="sandbox-preview">
           {!selected && <div className="empty">选择左侧文件查看内容</div>}
           {selected && !selected.is_text && (
-            <div className="empty">非文本文件（{formatSize(selected.size)}），无法预览</div>
+            <div className="empty">非文本文件（{formatSize(selected.size)}），无法预览或编辑</div>
           )}
-          {selected?.is_text && (
-            <pre className="sandbox-content">
-              {loadingContent ? '加载中…' : content}
-            </pre>
+          {selected?.is_text && !editing && (
+            <>
+              <div className="sandbox-preview-bar">
+                <span className="sandbox-preview-name">{selected.path}</span>
+                <button type="button" className="ex-regen" onClick={startEdit}>
+                  ✏️ 编辑
+                </button>
+              </div>
+              <pre className="sandbox-content">
+                {loadingContent ? '加载中…' : content}
+              </pre>
+            </>
+          )}
+          {selected?.is_text && editing && (
+            <>
+              <div className="sandbox-preview-bar">
+                <span className="sandbox-preview-name">编辑：{selected.path}</span>
+                <div className="sandbox-actions">
+                  <button
+                    type="button"
+                    className="ex-regen"
+                    onClick={cancelEdit}
+                    disabled={saving}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="ex-regen primary"
+                    onClick={() => void saveEdit()}
+                    disabled={saving}
+                  >
+                    {saving ? '保存中…' : '💾 保存'}
+                  </button>
+                </div>
+              </div>
+              <textarea
+                className="sandbox-editor"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                spellCheck={false}
+              />
+            </>
           )}
         </div>
       </div>
