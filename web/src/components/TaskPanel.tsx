@@ -227,7 +227,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
             </div>
             <button
               type="button"
-              className="ex-regen"
+              className="ex-regen-link"
               onClick={regenerateExamples}
               disabled={busy || regenerating}
               title="让模型生成一批新的示例任务（不依赖记忆偏好）"

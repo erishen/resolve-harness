@@ -430,6 +430,34 @@ body {
   cursor: not-allowed;
 }
 
+/* text/link-style button — distinct from the filled example cards */
+.ex-regen-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 5px 8px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.ex-regen-link:hover:not(:disabled) {
+  background: rgba(108, 140, 255, 0.12);
+  border-color: rgba(108, 140, 255, 0.4);
+}
+
+.ex-regen-link:disabled {
+  color: var(--text-dim);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .ex-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
@@ -440,12 +468,12 @@ body {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
+  gap: 6px;
   text-align: left;
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 9px 12px;
+  padding: 12px 14px;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s, transform 0.12s;
 }
@@ -484,11 +512,11 @@ body {
 }
 
 .ex-card-text {
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #cdd3e3;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-word;
