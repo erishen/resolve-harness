@@ -105,9 +105,10 @@ export default function TaskPanel({ onMemoryChange }: Props) {
   const [state, setState] = useState<RunState>('idle')
   const [error, setError] = useState('')
   const [model, setModel] = useState('')
-  const [examples, setExamples] = useState<{ label: string; text: string }[]>([])
+  const [examples, setExamples] = useState<{ label: string; text: string; source?: string }[]>([])
   const [examplesLoading, setExamplesLoading] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const esRef = useRef<EventSource | null>(null)
 
   const loadExamples = useCallback(async (force = false) => {
@@ -187,6 +188,14 @@ export default function TaskPanel({ onMemoryChange }: Props) {
 
   const busy = state === 'running'
 
+  const builtin = examples.filter((e) => e.source !== 'personalized')
+  const personalized = examples.filter((e) => e.source === 'personalized')
+
+  const pickExample = (text: string) => {
+    setObjective(text)
+    inputRef.current?.focus()
+  }
+
   return (
     <div className="task-panel">
       <div className="task-composer">
@@ -194,28 +203,69 @@ export default function TaskPanel({ onMemoryChange }: Props) {
           任务目标 — Planner 拆解 → Specialist 执行 → Evaluator 验收
         </div>
         <div className="task-examples">
-          <span className="ex-label">示例</span>
-          {examples.map((ex) => (
+          <div className="ex-head">
+            <div className="ex-title">
+              <span className="ex-title-main">示例任务</span>
+              <span className="ex-title-sub">点卡片填入目标，再点运行</span>
+            </div>
             <button
-              key={`${ex.label}:${ex.text.slice(0, 12)}`}
               type="button"
-              className="ex-chip"
-              disabled={busy}
-              title={ex.text}
-              onClick={() => setObjective(ex.text)}
+              className="ex-regen"
+              disabled={busy || examplesLoading}
+              title="根据长期记忆偏好重新生成示例"
+              onClick={() => void loadExamples(true)}
             >
-              {ex.label}
+              {examplesLoading ? (
+                <>
+                  <span className="spinner" /> 生成中…
+                </>
+              ) : (
+                <>🪄 按记忆重新生成</>
+              )}
             </button>
-          ))}
-          <button
-            type="button"
-            className="ex-chip ex-regen"
-            disabled={busy || examplesLoading}
-            title="根据长期记忆偏好重新生成示例"
-            onClick={() => void loadExamples(true)}
-          >
-            {examplesLoading ? '生成中…' : '🔄 重新生成'}
-          </button>
+          </div>
+
+          {builtin.length > 0 && (
+            <div className="ex-group">
+              <div className="ex-group-label">快速开始</div>
+              <div className="ex-grid">
+                {builtin.map((ex) => (
+                  <button
+                    key={`${ex.label}:${ex.text.slice(0, 12)}`}
+                    type="button"
+                    className="ex-card"
+                    disabled={busy}
+                    onClick={() => pickExample(ex.text)}
+                  >
+                    <span className="ex-card-label">{ex.label}</span>
+                    <span className="ex-card-text">{ex.text}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {personalized.length > 0 && (
+            <div className="ex-group">
+              <div className="ex-group-label">
+                <span className="ex-spark">✨</span> 为你生成 · 基于长期记忆
+              </div>
+              <div className="ex-grid">
+                {personalized.map((ex) => (
+                  <button
+                    key={`${ex.label}:${ex.text.slice(0, 12)}`}
+                    type="button"
+                    className="ex-card personal"
+                    disabled={busy}
+                    onClick={() => pickExample(ex.text)}
+                  >
+                    <span className="ex-card-label">{ex.label}</span>
+                    <span className="ex-card-text">{ex.text}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <form
           onSubmit={(e) => {
@@ -224,6 +274,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
           }}
         >
           <input
+            ref={inputRef}
             value={objective}
             onChange={(e) => setObjective(e.target.value)}
             placeholder="例：调研 RAG 的常见方案并写一份对比报告存入沙箱"
