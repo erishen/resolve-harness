@@ -218,5 +218,12 @@ def _register_plugin_routes(app: FastAPI) -> None:
 
         return {"examples": generate_examples()}
 
+    @app.post("/api/examples/regenerate")
+    def examples_regenerate() -> dict[str, Any]:
+        from .examples import generate_fresh_examples
+
+        h: Harness = app.state.harness
+        return {"examples": generate_fresh_examples(h, force=True)}
+
 
 app = create_app()

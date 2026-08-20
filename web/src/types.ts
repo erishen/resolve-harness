@@ -111,5 +111,5 @@ export interface PluginItem {
 export interface ExampleItem {
   label: string
   text: string
-  source?: 'builtin' | 'personalized'
+  source?: 'builtin' | 'generated'
 }

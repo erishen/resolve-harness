@@ -52,6 +52,8 @@ export const api = {
       body: JSON.stringify({ names }),
     }),
   examples: () => request<{ examples: ExampleItem[] }>('/examples'),
+  regenerateExamples: () =>
+    request<{ examples: ExampleItem[] }>('/examples/regenerate', { method: 'POST' }),
 }
 
 // transcript items -> ChatMessage (group consecutive tool traces into the reply)

@@ -404,6 +404,32 @@ body {
   text-overflow: ellipsis;
 }
 
+.ex-regen {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--chip);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.ex-regen:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: #262c3d;
+}
+
+.ex-regen:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .ex-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));

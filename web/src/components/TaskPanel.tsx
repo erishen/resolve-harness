@@ -115,6 +115,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
   const [error, setError] = useState('')
   const [model, setModel] = useState('')
   const [examples, setExamples] = useState<{ label: string; text: string; source?: string }[]>([])
+  const [regenerating, setRegenerating] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const esRef = useRef<EventSource | null>(null)
@@ -128,6 +129,19 @@ export default function TaskPanel({ onMemoryChange }: Props) {
       setExamples(FALLBACK_EXAMPLES)
     }
   }, [])
+
+  const regenerateExamples = useCallback(async () => {
+    if (regenerating) return
+    setRegenerating(true)
+    try {
+      const { examples } = await api.regenerateExamples()
+      if (examples.length > 0) setExamples(examples)
+    } catch {
+      /* keep the current examples on failure — regeneration is best-effort */
+    } finally {
+      setRegenerating(false)
+    }
+  }, [regenerating])
 
   useEffect(() => {
     void loadExamples()
@@ -211,6 +225,15 @@ export default function TaskPanel({ onMemoryChange }: Props) {
               <span className="ex-title-main">示例任务</span>
               <span className="ex-title-sub">点卡片填入目标，再点运行</span>
             </div>
+            <button
+              type="button"
+              className="ex-regen"
+              onClick={regenerateExamples}
+              disabled={busy || regenerating}
+              title="让模型生成一批新的示例任务（不依赖记忆偏好）"
+            >
+              {regenerating ? '生成中…' : '🪄 重新生成'}
+            </button>
           </div>
 
           <div className="ex-grid">

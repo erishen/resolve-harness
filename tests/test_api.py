@@ -21,10 +21,14 @@ class FakeHarness:
         # TaskRunner is constructed by create_app even if unused by these tests;
         # give it duck-typed stand-ins.
         self.router = SimpleNamespace(
-            complete=lambda *a, **k: {"role": "assistant", "content": ""},
+            complete=lambda *a, **k: {
+                "role": "assistant",
+                "content": '[{"label": "数据清洗", "text": "生成 12 个带噪声的温度读数保存为 temps.csv，写脚本清洗异常值并输出均值与最大值"}]',
+            },
             parse_tool_calls=lambda m: [],
         )
         self.tools = ToolRegistry()
+        self.sandbox_dir = None
         self.last_steps = 0
         self.last_trace: list[dict] = []
         self._transcript: list[dict] = []
@@ -114,3 +118,18 @@ class TestApi:
         assert default_rows == []
         alice_rows = client.get("/api/memories?scope=alice").json()["memories"]
         assert len(alice_rows) == 1
+
+    def test_examples_fixed(self, client: TestClient) -> None:
+        res = client.get("/api/examples")
+        assert res.status_code == 200
+        examples = res.json()["examples"]
+        assert all(e["source"] == "builtin" for e in examples)
+        assert not any("记住" in e["text"] for e in examples)
+
+    def test_examples_regenerate_returns_fresh(self, client: TestClient) -> None:
+        res = client.post("/api/examples/regenerate")
+        assert res.status_code == 200
+        examples = res.json()["examples"]
+        # built-ins are preserved, plus at least one model-generated task
+        assert any(e["source"] == "builtin" for e in examples)
+        assert any(e["source"] == "generated" for e in examples)
