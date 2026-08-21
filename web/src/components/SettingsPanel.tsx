@@ -39,15 +39,41 @@ function rowsToProfiles(rows: ProfileRow[]): Record<string, { base_url: string; 
   return out
 }
 
+/** 数字输入上下限：即时 clamp 到 [min,max]，允许清空编辑，失焦补回下限。 */
+function clampNum(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n))
+}
+
+/** 受控数字输入 onChange：仅数字串，超上限立即截断，空串允许（编辑中）。 */
+function numOnChange(setter: (v: string) => void, min: number, max: number) {
+  return (e: { target: { value: string } }) => {
+    const v = e.target.value
+    if (v === '') {
+      setter('')
+      return
+    }
+    if (!/^\d+$/.test(v)) return
+    setter(String(clampNum(Number(v), min, max)))
+  }
+}
+
+/** 失焦：空串补回下限。 */
+function numOnBlur(setter: (v: string) => void, current: string, min: number) {
+  return () => {
+    if (current === '') setter(String(min))
+  }
+}
+
 /** 设置 Tab：模型库（baseURL + Key + 模型名）+ 默认/各 Agent 模型 + 运行参数。 */
 export default function SettingsPanel() {
   const [cfg, setCfg] = useState<AppConfig | null>(null)
   const [rows, setRows] = useState<ProfileRow[]>([])
   const [defaultModel, setDefaultModel] = useState('')
   const [agentModels, setAgentModels] = useState<Record<string, string>>({})
-  const [parallel, setParallel] = useState(4)
-  const [replan, setReplan] = useState(1)
-  const [maxSteps, setMaxSteps] = useState(10)
+  // 字符串态：允许清空编辑，blur 补下限，onChange 即时 clamp 上下限
+  const [parallel, setParallel] = useState('4')
+  const [replan, setReplan] = useState('1')
+  const [maxSteps, setMaxSteps] = useState('10')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
   const [error, setError] = useState('')
@@ -62,9 +88,9 @@ export default function SettingsPanel() {
         setRows(profilesToRows(c.models ?? {}))
         setDefaultModel(c.default_model)
         setAgentModels(c.agent_models ?? {})
-        setParallel(c.parallel)
-        setReplan(c.max_replan_rounds)
-        setMaxSteps(c.max_steps)
+        setParallel(String(c.parallel))
+        setReplan(String(c.max_replan_rounds))
+        setMaxSteps(String(c.max_steps))
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
       }
@@ -81,9 +107,9 @@ export default function SettingsPanel() {
     setMsg('')
     try {
       const c = await api.setConfig(
-        parallel,
-        replan,
-        maxSteps,
+        clampNum(Number(parallel) || 4, 1, 16),
+        clampNum(Number(replan) || 1, 0, 5),
+        clampNum(Number(maxSteps) || 10, 1, 50),
         agentModels,
         defaultModel,
         rowsToProfiles(rows),
@@ -92,6 +118,9 @@ export default function SettingsPanel() {
       setRows(profilesToRows(c.models ?? {}))
       setDefaultModel(c.default_model)
       setAgentModels(c.agent_models ?? {})
+      setParallel(String(c.parallel))
+      setReplan(String(c.max_replan_rounds))
+      setMaxSteps(String(c.max_steps))
       const n = Object.keys(c.models ?? {}).length
       setMsg(
         `已保存：默认模型 ${c.active_model} · 模型库 ${n} 个` +
@@ -241,42 +270,48 @@ export default function SettingsPanel() {
         <div className="settings-section-title">运行参数</div>
         <div className="settings-row-group">
           <label className="settings-row">
-            <span className="settings-label">Specialist 循环步数上限</span>
+            <span className="settings-label">
+              Specialist 循环步数上限
+              <span className="settings-hint">1 - 50</span>
+            </span>
             <input
               type="number"
               className="settings-input settings-num"
               min={1}
               max={50}
               value={maxSteps}
-              onChange={(e) =>
-                setMaxSteps(Math.max(1, Math.min(50, Number(e.target.value) || 1)))
-              }
+              onChange={numOnChange(setMaxSteps, 1, 50)}
+              onBlur={numOnBlur(setMaxSteps, maxSteps, 1)}
             />
           </label>
           <label className="settings-row">
-            <span className="settings-label">并行子任务数 N</span>
+            <span className="settings-label">
+              并行子任务数 N
+              <span className="settings-hint">1 - 16</span>
+            </span>
             <input
               type="number"
               className="settings-input settings-num"
               min={1}
               max={16}
               value={parallel}
-              onChange={(e) =>
-                setParallel(Math.max(1, Math.min(16, Number(e.target.value) || 1)))
-              }
+              onChange={numOnChange(setParallel, 1, 16)}
+              onBlur={numOnBlur(setParallel, parallel, 1)}
             />
           </label>
           <label className="settings-row">
-            <span className="settings-label">失败重试（重规划轮数）</span>
+            <span className="settings-label">
+              失败重试（重规划轮数）
+              <span className="settings-hint">0 - 5</span>
+            </span>
             <input
               type="number"
               className="settings-input settings-num"
               min={0}
               max={5}
               value={replan}
-              onChange={(e) =>
-                setReplan(Math.max(0, Math.min(5, Number(e.target.value) || 0)))
-              }
+              onChange={numOnChange(setReplan, 0, 5)}
+              onBlur={numOnBlur(setReplan, replan, 0)}
             />
           </label>
         </div>
