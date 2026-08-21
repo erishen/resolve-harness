@@ -190,9 +190,11 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
             const labelX = (x1 + x2) / 2
             const labelY = (y1 + y2) / 2
             if (e.loop) {
-              // decision -> plan：右侧折线绕行（decision 右尖 → 右外侧 x=680 →
-              // 上到 Planner 底边高度 → 左进节点），不穿过任何节点
-              const outerX = x1 + 340 // decision x=340 -> 680（右列节点右缘 670 之外）
+              // decision -> plan：右侧窄走廊折线（decision 右尖 → x=450 →
+              // 上到 Planner 底边高度 → 左进节点）。
+              // x=450 在「结束」节点左缘(520)之内，不跨过 Fast Path 的
+              // 垂直边（x=595），因此不压任何路径。
+              const outerX = x1 + 110 // decision x=340 -> 450
               const path = `M ${x1 + 60} ${y1} L ${outerX} ${y1} L ${outerX} ${y2 + 28} L ${x2} ${y2 + 25}`
               const lx = (x1 + 60 + outerX) / 2
               const ly = y1 - 10
