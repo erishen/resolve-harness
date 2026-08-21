@@ -13,6 +13,7 @@ wheels/
 # Node frontend
 web/node_modules/
 web/dist/
+web/dist_*/
 
 # Secrets — never commit real keys
 .env
