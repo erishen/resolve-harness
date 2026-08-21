@@ -1,12 +1,16 @@
 import type {
+  AgentsResponse,
+  ApprovalDecision,
   ChatMessage,
   ChatResponse,
+  ChatTurn,
   ExampleItem,
   MemoryRow,
   PluginItem,
   SandboxFile,
   StateResponse,
   TaskSnapshot,
+  ToolInfo,
   TranscriptItem,
 } from './types'
 
@@ -29,12 +33,39 @@ export const api = {
   state: () => request<StateResponse>('/state'),
   chat: (message: string) =>
     request<ChatResponse>('/chat', { method: 'POST', body: JSON.stringify({ message }) }),
+  chatHistory: () => request<{ turns: ChatTurn[] }>('/chat/history'),
+  clearChatHistory: () =>
+    request<{ deleted: number }>('/chat/history', { method: 'DELETE' }),
+  tools: () => request<{ tools: ToolInfo[] }>('/tools'),
+  agents: () => request<AgentsResponse>('/agents'),
+  getConfig: () =>
+    request<{ parallel: number; max_replan_rounds: number; max_steps: number }>('/config'),
+  setConfig: (parallel: number, maxReplanRounds: number, maxSteps: number) =>
+    request<{ parallel: number; max_replan_rounds: number; max_steps: number }>('/config', {
+      method: 'PUT',
+      body: JSON.stringify({ parallel, max_replan_rounds: maxReplanRounds, max_steps: maxSteps }),
+    }),
+  approve: (threadId: string, decisions: ApprovalDecision[] | 'approve' | 'deny') =>
+    request<ChatResponse>('/chat/approve', {
+      method: 'POST',
+      body: JSON.stringify({ thread_id: threadId, decisions }),
+    }),
   reset: () => request<{ ok: boolean }>('/reset', { method: 'POST' }),
   memories: () => request<{ memories: MemoryRow[] }>('/memories'),
+  addMemory: (key: string, value: unknown, scope?: string) =>
+    request<{ ok: boolean }>('/memories', {
+      method: 'POST',
+      body: JSON.stringify({ key, value, scope: scope ?? 'default' }),
+    }),
   forgetMemory: (key: string) =>
     request<{ ok: boolean }>(`/memories?key=${encodeURIComponent(key)}`, {
       method: 'DELETE',
     }),
+  clearMemories: (scope?: string) =>
+    request<{ ok: boolean; deleted: number }>(
+      `/memories?scope=${encodeURIComponent(scope ?? 'default')}`,
+      { method: 'DELETE' },
+    ),
   createTask: (objective: string) =>
     request<{ task_id: string }>('/tasks', {
       method: 'POST',
@@ -55,7 +86,13 @@ export const api = {
   examples: () => request<{ examples: ExampleItem[] }>('/examples'),
   regenerateExamples: () =>
     request<{ examples: ExampleItem[] }>('/examples/regenerate', { method: 'POST' }),
+  deleteExample: (label: string, text: string) =>
+    request<{ ok: boolean }>('/examples/delete', {
+      method: 'POST',
+      body: JSON.stringify({ label, text }),
+    }),
   sandbox: () => request<{ files: SandboxFile[]; sandbox_dir: string | null }>('/sandbox'),
+  sandboxRawUrl: (path: string) => `/api/sandbox/raw?path=${encodeURIComponent(path)}`,
   sandboxFile: (path: string) =>
     request<{ path: string; content: string; size: number }>(
       `/sandbox/content?path=${encodeURIComponent(path)}`,

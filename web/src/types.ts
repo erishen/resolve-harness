@@ -10,6 +10,104 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   tools?: ToolEvent[]
+  loopSteps?: number
+  usage?: UsageInfo
+  approval?: { threadId: string; pending: ApprovalCall[] }
+}
+
+// ---- token usage ----------------------------------------------------------
+
+export interface UsageInfo {
+  prompt_tokens?: number
+  completion_tokens?: number
+  total_tokens?: number
+}
+
+/** 一条已完成的聊天回合（落库的 token 消耗记录）。 */
+export interface ChatTurn {
+  created_at: string
+  user_msg: string
+  reply: string
+  steps: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+}
+
+/** 一个工具及其在各模式的可用性。 */
+export interface ToolInfo {
+  name: string
+  description: string
+  parameters: Record<string, unknown> | null
+  require_approval: boolean
+  chat: boolean
+  task: boolean
+}
+
+/** 任务流水线中的一个 Agent。 */
+export interface PipelineAgent {
+  name: string
+  role: string
+  description: string
+  tools: string
+  phase: string
+}
+
+/** 流程图节点。 */
+export interface GraphNode {
+  id: string
+  label: string
+  x: number
+  y: number
+  shape: 'rect' | 'ellipse' | 'diamond'
+  kind: string
+}
+
+/** 流程图边。 */
+export interface GraphEdge {
+  from: string
+  to: string
+  label: string
+  loop?: boolean
+}
+
+export interface AgentsResponse {
+  agents: PipelineAgent[]
+  graph: { nodes: GraphNode[]; edges: GraphEdge[] }
+}
+
+/** 千分位格式化（1,830）。 */
+export function fmtNum(n: number): string {
+  return n.toLocaleString('en-US')
+}
+
+/** token 构成展示：总数 + 输入/输出拆分。 */
+export function fmtUsage(u: UsageInfo | null | undefined): string {
+  const total = u?.total_tokens
+  const prompt = u?.prompt_tokens
+  const completion = u?.completion_tokens
+  if (total === undefined) return ''
+  const parts = [`${fmtNum(total)} tokens`]
+  if (prompt !== undefined) parts.push(`输入 ${fmtNum(prompt)}`)
+  if (completion !== undefined) parts.push(`输出 ${fmtNum(completion)}`)
+  return parts.join(' · ')
+}
+
+// ---- human-in-the-loop approval -----------------------------------------
+
+export type ApprovalAction = 'approve' | 'deny' | 'edit'
+
+export interface ApprovalCall {
+  id: string
+  name: string
+  args: Record<string, unknown>
+}
+
+export interface ApprovalDecision {
+  id: string
+  action: ApprovalAction
+  reason?: string
+  args?: Record<string, unknown>
 }
 
 export interface MemoryRow {
@@ -29,6 +127,10 @@ export interface ChatResponse {
   steps: number
   trace: ToolEvent[]
   transcript: TranscriptItem[]
+  status?: 'done' | 'pending_approval'
+  pending?: ApprovalCall[] | null
+  thread_id?: string | null
+  usage?: UsageInfo | null
 }
 
 export interface StateResponse {
@@ -43,6 +145,8 @@ export type TaskEventType =
   | 'task_start'
   | 'plan'
   | 'subtask_start'
+  | 'node_enter'
+  | 'route'
   | 'thought'
   | 'tool_call'
   | 'tool_result'
@@ -106,6 +210,10 @@ export interface PluginItem {
   source: string
   mtime: number
   size: number
+  /** true = 内置（核心匹配器 / 晋升检测器），只读，不可删/不可再晋升 */
+  builtin?: boolean
+  /** 内置分类：内置核心（fastpath 匹配器） / 内置晋升（generated_detectors） */
+  kind?: string
 }
 
 export interface ExampleItem {
@@ -119,4 +227,5 @@ export interface SandboxFile {
   size: number
   mtime: number
   is_text: boolean
+  kind: 'text' | 'markdown' | 'html' | 'image' | 'pdf' | 'csv' | 'json' | 'code' | 'binary'
 }

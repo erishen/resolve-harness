@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
+import { marked } from 'marked'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/github-dark.css'
 import { api } from '../api'
 import type { SandboxFile } from '../types'
 
@@ -14,6 +17,80 @@ function formatMtime(mtime: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+/** Renderable text kinds that get a rendered preview (with an edit fallback). */
+const RENDERABLE_KINDS = new Set(['markdown', 'html', 'csv'])
+/** Kinds displayed as syntax-highlighted source (still editable). */
+const HIGHLIGHTED_KINDS = new Set(['json', 'code'])
+
+/** Extension -> highlight.js language (fallback: plaintext). */
+const EXT_LANG: Record<string, string> = {
+  py: 'python',
+  js: 'javascript',
+  mjs: 'javascript',
+  cjs: 'javascript',
+  ts: 'typescript',
+  tsx: 'typescript',
+  jsx: 'javascript',
+  css: 'css',
+  scss: 'scss',
+  sh: 'bash',
+  bash: 'bash',
+  go: 'go',
+  rs: 'rust',
+  java: 'java',
+  c: 'c',
+  h: 'c',
+  cpp: 'cpp',
+  hpp: 'cpp',
+  sql: 'sql',
+  yaml: 'yaml',
+  yml: 'yaml',
+  toml: 'ini',
+  ini: 'ini',
+  cfg: 'ini',
+  rb: 'ruby',
+  php: 'php',
+  swift: 'swift',
+  json: 'json',
+}
+
+function languageFor(path: string, kind: string): string {
+  const ext = path.split('.').pop()?.toLowerCase() ?? ''
+  return (kind === 'json' ? 'json' : EXT_LANG[ext]) || 'plaintext'
+}
+
+/** Pretty-print valid JSON, fall back to raw text. */
+function prettyJson(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2)
+  } catch {
+    return text
+  }
+}
+
+/** Syntax-highlight a code/JSON snippet via highlight.js. */
+function highlightCode(code: string, language: string): string {
+  try {
+    return hljs.highlight(code, { language, ignoreIllegals: true }).value
+  } catch {
+    return hljs.highlightAuto(code).value
+  }
+}
+
+/** Source view for json/code kinds: pretty-print JSON, then highlight. */
+function sourceHtml(file: SandboxFile, text: string): string {
+  const code = file.kind === 'json' ? prettyJson(text) : text
+  return highlightCode(code, languageFor(file.path, file.kind))
+}
+
+/** Dead-simple CSV/TSV parser — good enough for a preview table. */
+function parseTable(text: string): string[][] {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== '')
+    .map((line) => line.split(/[,\t]/).map((cell) => cell.trim()))
+}
+
 export default function SandboxPanel() {
   const [files, setFiles] = useState<SandboxFile[]>([])
   const [selected, setSelected] = useState<SandboxFile | null>(null)
@@ -22,10 +99,13 @@ export default function SandboxPanel() {
   const [error, setError] = useState('')
   const [sandboxDir, setSandboxDir] = useState<string | null>(null)
 
-  // edit mode
+  // edit mode / rendered preview mode
   const [editing, setEditing] = useState(false)
+  const [previewing, setPreviewing] = useState(true)
   const [draft, setDraft] = useState('')
   const [saving, setSaving] = useState(false)
+  // bumped after every save so an HTML <iframe> re-renders with fresh content
+  const [renderNonce, setRenderNonce] = useState(0)
 
   const load = useCallback(async () => {
     try {
@@ -45,6 +125,7 @@ export default function SandboxPanel() {
   const openFile = useCallback(async (file: SandboxFile) => {
     setSelected(file)
     setEditing(false)
+    setPreviewing(true)
     setDraft('')
     if (!file.is_text) {
       setContent('')
@@ -79,6 +160,8 @@ export default function SandboxPanel() {
       await api.sandboxWrite(selected.path, draft)
       setContent(draft)
       setEditing(false)
+      setPreviewing(true) // back to rendered preview for markdown/html/csv
+      setRenderNonce((n) => n + 1)
       await load() // refresh size / mtime
     } catch {
       setError('保存失败')
@@ -180,22 +263,98 @@ export default function SandboxPanel() {
 
         <div className="sandbox-preview">
           {!selected && <div className="empty">选择左侧文件查看内容</div>}
-          {selected && !selected.is_text && (
-            <div className="empty">非文本文件（{formatSize(selected.size)}），无法预览或编辑</div>
+
+          {selected?.kind === 'image' && (
+            <div className="sandbox-visual">
+              <div className="sandbox-preview-bar">
+                <span className="sandbox-preview-name">{selected.path}</span>
+              </div>
+              <img
+                className="sandbox-img"
+                src={api.sandboxRawUrl(selected.path)}
+                alt={selected.path}
+              />
+            </div>
           )}
+
+          {selected?.kind === 'pdf' && (
+            <div className="sandbox-visual">
+              <div className="sandbox-preview-bar">
+                <span className="sandbox-preview-name">{selected.path}</span>
+              </div>
+              <iframe
+                className="sandbox-iframe"
+                src={api.sandboxRawUrl(selected.path)}
+                title={selected.path}
+              />
+            </div>
+          )}
+
+          {selected && selected.kind === 'binary' && (
+            <div className="empty">二进制文件（{formatSize(selected.size)}），无法预览或编辑</div>
+          )}
+
           {selected?.is_text && !editing && (
             <>
               <div className="sandbox-preview-bar">
                 <span className="sandbox-preview-name">{selected.path}</span>
-                <button type="button" className="ex-regen" onClick={startEdit}>
-                  ✏️ 编辑
-                </button>
+                <div className="sandbox-actions">
+                  {RENDERABLE_KINDS.has(selected.kind) && (
+                    <button
+                      type="button"
+                      className={`ex-regen${previewing ? ' primary' : ''}`}
+                      onClick={() => setPreviewing(true)}
+                      title="渲染预览"
+                    >
+                      👁 预览
+                    </button>
+                  )}
+                  <button type="button" className="ex-regen" onClick={startEdit}>
+                    ✏️ 编辑
+                  </button>
+                </div>
               </div>
-              <pre className="sandbox-content">
-                {loadingContent ? '加载中…' : content}
-              </pre>
+              {loadingContent ? (
+                <pre className="sandbox-content">加载中…</pre>
+              ) : previewing && selected.kind === 'markdown' ? (
+                <div
+                  className="step-markdown sandbox-markdown"
+                  dangerouslySetInnerHTML={{ __html: marked.parse(content) }}
+                />
+              ) : previewing && selected.kind === 'html' ? (
+                <iframe
+                  key={renderNonce}
+                  className="sandbox-iframe"
+                  src={api.sandboxRawUrl(selected.path)}
+                  title={selected.path}
+                />
+              ) : previewing && selected.kind === 'csv' ? (
+                <div className="sandbox-table-wrap">
+                  <table className="sandbox-table">
+                    <tbody>
+                      {parseTable(content).map((row, i) => (
+                        <tr key={i}>
+                          {row.map((cell, j) => (
+                            <td key={j}>{cell}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : HIGHLIGHTED_KINDS.has(selected.kind) ? (
+                <pre className="sandbox-content sandbox-highlight">
+                  <code
+                    className="hljs"
+                    dangerouslySetInnerHTML={{ __html: sourceHtml(selected, content) }}
+                  />
+                </pre>
+              ) : (
+                <pre className="sandbox-content">{content}</pre>
+              )}
             </>
           )}
+
           {selected?.is_text && editing && (
             <>
               <div className="sandbox-preview-bar">
