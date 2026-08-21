@@ -343,26 +343,33 @@ def create_app(
         and codegen short-circuits and an error sink.
         """
         nodes = [
-            {"id": "start", "label": "开始", "x": 60, "y": 40, "shape": "ellipse", "kind": "entry"},
-            {"id": "fastpath", "label": "Fast Path", "x": 430, "y": 40, "shape": "rect", "kind": "shortcut"},
-            {"id": "codegen", "label": "codegen\n生成检测器", "x": 430, "y": 110, "shape": "rect", "kind": "shortcut"},
-            {"id": "plan", "label": "Planner\n拆解目标", "x": 60, "y": 200, "shape": "rect", "kind": "agent"},
-            {"id": "execute", "label": "Specialist ×N\n执行子任务", "x": 60, "y": 310, "shape": "rect", "kind": "agent"},
-            {"id": "evaluate", "label": "Evaluator\n评估结果", "x": 60, "y": 420, "shape": "rect", "kind": "agent"},
-            {"id": "decision", "label": "达标？", "x": 320, "y": 420, "shape": "diamond", "kind": "gate"},
-            {"id": "report", "label": "Reporter\n汇总交付", "x": 60, "y": 530, "shape": "rect", "kind": "agent"},
-            {"id": "end", "label": "结束", "x": 430, "y": 530, "shape": "ellipse", "kind": "exit"},
-            {"id": "error", "label": "错误", "x": 60, "y": 640, "shape": "rect", "kind": "error"},
+            # 左列主链：开始 → Planner → Specialist ×N → Evaluator → 判定
+            {"id": "start", "label": "开始", "x": 40, "y": 30, "shape": "ellipse", "kind": "entry"},
+            {"id": "plan", "label": "Planner\n拆解目标", "x": 40, "y": 180, "shape": "rect", "kind": "agent"},
+            {"id": "execute", "label": "Specialist ×N\n执行子任务", "x": 40, "y": 330, "shape": "rect", "kind": "agent"},
+            {"id": "evaluate", "label": "Evaluator\n评估结果", "x": 40, "y": 480, "shape": "rect", "kind": "agent"},
+            # 中列判定与收口：达标？→ Reporter → 结束
+            {"id": "decision", "label": "达标？", "x": 280, "y": 480, "shape": "diamond", "kind": "gate"},
+            {"id": "report", "label": "Reporter\n汇总交付", "x": 280, "y": 600, "shape": "rect", "kind": "agent"},
+            # 右列短路与出口：Fast Path / codegen → 结束
+            {"id": "fastpath", "label": "Fast Path\n代码直算", "x": 520, "y": 30, "shape": "rect", "kind": "shortcut"},
+            {"id": "codegen", "label": "codegen\n生成检测器", "x": 520, "y": 140, "shape": "rect", "kind": "shortcut"},
+            {"id": "end", "label": "结束", "x": 520, "y": 600, "shape": "ellipse", "kind": "exit"},
+            # 异常出口
+            {"id": "error", "label": "错误", "x": 40, "y": 660, "shape": "rect", "kind": "error"},
         ]
         edges = [
+            # 快捷分支（右列）
             {"from": "start", "to": "fastpath", "label": "objective 命中\n确定性查询"},
             {"from": "fastpath", "to": "end", "label": "代码直算\n零模型"},
             {"from": "start", "to": "codegen", "label": "未命中"},
             {"from": "codegen", "to": "end", "label": "成功即持久化\n复用"},
+            # 主链
             {"from": "start", "to": "plan", "label": "常规路径"},
             {"from": "plan", "to": "execute", "label": "子任务列表\n并行 / 串行"},
             {"from": "execute", "to": "evaluate", "label": "各子任务结果"},
             {"from": "evaluate", "to": "decision", "label": "对照目标验证"},
+            # 判定分支
             {"from": "decision", "to": "report", "label": "通过"},
             {"from": "decision", "to": "plan", "label": "未通过（带反馈\n重规划，限轮次）", "loop": True},
             {"from": "report", "to": "end", "label": "最终交付"},

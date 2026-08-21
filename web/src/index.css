@@ -2711,3 +2711,61 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* 流程图图例 */
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.legend-item {
+  font-size: 11px;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-item::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1.4px solid;
+}
+
+.legend-agent::before {
+  background: var(--chip);
+  border-color: var(--accent);
+}
+
+.legend-shortcut::before {
+  background: var(--panel-2);
+  border-color: var(--ok, #3d9a50);
+}
+
+.legend-gate::before {
+  background: var(--panel-2);
+  border-color: var(--warn, #b98a2f);
+}
+
+.legend-entry::before {
+  background: var(--accent);
+  border-color: var(--accent);
+  border-radius: 50%;
+}
+
+.legend-error::before {
+  background: var(--danger, #c0392b);
+  border-color: var(--danger, #c0392b);
+}
+
+.legend-loop::before {
+  background: transparent;
+  border-color: var(--text-dim);
+  border-style: dashed;
+}
