@@ -135,6 +135,7 @@ class TaskRunner:
         codegen: bool = True,
         parallel: int = 4,
         history_path: str | Path | None = None,
+        agent_models: dict[str, str] | None = None,
     ) -> None:
         self.harness = harness
         self.router: LiteLLMRouter = harness.router
@@ -143,6 +144,19 @@ class TaskRunner:
         self.max_replan_rounds = max_replan_rounds
         self.plugin_dir = plugin_dir  # None -> data/fastpath_plugins
         self.codegen = codegen  # allow tests to pin the codegen step off
+        # per-agent LLM override: {"planner"|"specialist"|"evaluator"|"reporter": model}.
+        # absent/empty keys fall back to the router default model.
+        self.agent_models = {k: v for k, v in (agent_models or {}).items() if v}
+        self._planner = Planner(
+            self.router,
+            language=language,
+            model=self.agent_models.get("planner"),
+        )
+        self._evaluator = Evaluator(
+            self.router,
+            language=language,
+            model=self.agent_models.get("evaluator"),
+        )
         # parallel>1 runs the plan's subtasks concurrently (fan-out). The
         # router / memory / registry are thread-safe; results are collected
         # by index so the reporter still sees a stable order.
@@ -154,10 +168,21 @@ class TaskRunner:
         self._conn: sqlite3.Connection | None = None
         self._db_lock = threading.RLock()
         self._history: dict[str, dict[str, Any]] = self._load_history()
-        self._planner = Planner(self.router, language=language)
-        self._evaluator = Evaluator(self.router, language=language)
         self._records: dict[str, TaskRecord] = {}
         self._lock = threading.Lock()
+
+    def set_agent_models(self, models: dict[str, str]) -> None:
+        """Runtime update of per-agent LLM overrides; applies to the next task.
+
+        Planner/Evaluator instances are constructed once, so their model is
+        refreshed here; Specialist/Reporter read `agent_models` per task.
+        Unknown keys are dropped.
+        """
+        self.agent_models = {
+            k: v for k, v in models.items() if k in ("planner", "specialist", "evaluator", "reporter") and v
+        }
+        self._planner.model = self.agent_models.get("planner")
+        self._evaluator.model = self.agent_models.get("evaluator")
 
     # -- history (persisted task log, SQLite) --------------------------------------
 
@@ -507,6 +532,7 @@ class TaskRunner:
                 system_prompt=system_prompt,
                 verbose=self.harness.settings.verbose,
                 emit=emit_for_subtask,
+                model=self.agent_models.get("specialist"),
             )
             final = loop.invoke(
                 {
@@ -604,6 +630,7 @@ class TaskRunner:
                     }
                 ],
                 temperature=0.3,
+                model=self.agent_models.get("reporter"),
             )
             return (response.get("content") or "").strip() or _summarize_results(results)
         except Exception:  # noqa: BLE001 - fall back to plain summaries

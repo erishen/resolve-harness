@@ -89,14 +89,16 @@ class LiteLLMRouter:
         tools: list[dict[str, Any]] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        model: str | None = None,
     ) -> dict[str, Any]:
         """Call the model. Returns the raw message dict from the provider.
 
         The message dict follows the OpenAI shape:
             {"role": "assistant", "content": ..., "tool_calls": [...]}
+        `model` overrides the router default per call (used for per-agent LLMs).
         """
         kwargs: dict[str, Any] = {
-            "model": self.settings.model,
+            "model": model or self.settings.model,
             "messages": [dict(m) for m in messages],
             "temperature": self.settings.temperature if temperature is None else temperature,
             "max_tokens": self.settings.max_tokens if max_tokens is None else max_tokens,

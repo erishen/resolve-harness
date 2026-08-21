@@ -79,6 +79,7 @@ def build_loop(
     verbose: bool = False,
     emit: Callable[[str, dict[str, Any]], None] | None = None,
     needs_approval: Callable[[str], bool] | None = None,
+    model: str | None = None,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """Build and compile the agent loop graph.
 
@@ -128,6 +129,7 @@ def build_loop(
         response = router.complete(
             llm_messages,
             tools=registry.schemas() if len(registry) else None,
+            model=model,
         )
         tool_calls = router.parse_tool_calls(response)
         content = response.get("content") or ""

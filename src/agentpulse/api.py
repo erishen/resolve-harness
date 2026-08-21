@@ -78,39 +78,49 @@ class ConfigUpdate(BaseModel):
     parallel: int = Field(ge=1, le=16)
     max_replan_rounds: int = Field(ge=0, le=5)
     max_steps: int = Field(ge=1, le=50)
+    agent_models: dict[str, str] = Field(
+        default_factory=dict,
+        description='per-agent LLM override: planner/specialist/evaluator/reporter',
+    )
 
 
 def _config_path() -> Path:
     """Runtime config file: data/config.json (parallel count, replan rounds,
-    specialist loop step cap)."""
+    specialist loop step cap, per-agent LLM overrides)."""
     here = Path(__file__).resolve().parent
     root = here.parent.parent
     return root / "data" / "config.json"
 
 
-_DEFAULT_CONFIG: dict[str, int] = {
+_AGENT_KEYS = ("planner", "specialist", "evaluator", "reporter")
+
+_DEFAULT_CONFIG: dict[str, Any] = {
     "parallel": 4,  # Specialist fan-out
     "max_replan_rounds": 1,  # evaluator-fail replan rounds (anti-runaway)
     "max_steps": 10,  # specialist tool-loop step cap (planner/evaluator are single calls)
+    "agent_models": {},  # per-agent LLM override (empty = router default)
 }
 
 
-def _load_config() -> dict[str, int]:
-    """Runtime config: parallel fan-out (4), replan rounds (1), loop steps (10)."""
-    cfg = dict(_DEFAULT_CONFIG)
+def _load_config() -> dict[str, Any]:
+    """Runtime config: parallel (4), replan rounds (1), steps (10), agent models."""
+    cfg = json.loads(json.dumps(_DEFAULT_CONFIG))
     try:
         raw = json.loads(_config_path().read_text(encoding="utf-8"))
-        for key in cfg:
-            try:
-                cfg[key] = int(raw[key])
-            except (KeyError, ValueError, TypeError):
-                pass
     except OSError:
-        pass
+        return cfg
+    for key in ("parallel", "max_replan_rounds", "max_steps"):
+        try:
+            cfg[key] = int(raw[key])
+        except (KeyError, ValueError, TypeError):
+            pass
+    am = raw.get("agent_models") or {}
+    if isinstance(am, dict):
+        cfg["agent_models"] = {k: str(v) for k, v in am.items() if k in _AGENT_KEYS and v}
     return cfg
 
 
-def _save_config(cfg: dict[str, int]) -> None:
+def _save_config(cfg: dict[str, Any]) -> None:
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
@@ -205,11 +215,13 @@ def create_app(
     app = FastAPI(title="agentpulse", version="0.2.0")
     app.state.harness = h
     app.state.runner = runner or TaskRunner(h)
-    # apply persisted runtime config (parallel fan-out, replan rounds, steps)
+    # apply persisted runtime config (parallel fan-out, replan rounds, steps,
+    # per-agent LLM overrides)
     _cfg = _load_config()
     app.state.runner.parallel = _cfg["parallel"]
     app.state.runner.max_replan_rounds = _cfg["max_replan_rounds"]
     app.state.runner.max_steps = _cfg["max_steps"]
+    app.state.runner.set_agent_models(_cfg["agent_models"])
     app.state.chat_history = chat_history or ChatHistoryStore()
 
     app.add_middleware(
@@ -353,27 +365,32 @@ def create_app(
             "parallel": runner.parallel,
             "max_replan_rounds": runner.max_replan_rounds,
             "max_steps": runner.max_steps,
+            "agent_models": runner.agent_models,
         }
 
     @app.put("/api/config")
     def config_update(req: ConfigUpdate) -> dict[str, Any]:
         """Update task runtime config (parallel fan-out, replan rounds, loop
-        step cap); applies to the next task and persists across restarts."""
+        step cap, per-agent LLM overrides); applies to the next task and
+        persists across restarts."""
         runner: TaskRunner = app.state.runner
         runner.parallel = req.parallel
         runner.max_replan_rounds = req.max_replan_rounds
         runner.max_steps = req.max_steps
+        runner.set_agent_models(req.agent_models)
         _save_config(
             {
                 "parallel": req.parallel,
                 "max_replan_rounds": req.max_replan_rounds,
                 "max_steps": req.max_steps,
+                "agent_models": runner.agent_models,
             }
         )
         return {
             "parallel": runner.parallel,
             "max_replan_rounds": runner.max_replan_rounds,
             "max_steps": runner.max_steps,
+            "agent_models": runner.agent_models,
         }
 
     @app.delete("/api/chat/history")

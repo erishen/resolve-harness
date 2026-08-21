@@ -39,11 +39,31 @@ export const api = {
   tools: () => request<{ tools: ToolInfo[] }>('/tools'),
   agents: () => request<AgentsResponse>('/agents'),
   getConfig: () =>
-    request<{ parallel: number; max_replan_rounds: number; max_steps: number }>('/config'),
-  setConfig: (parallel: number, maxReplanRounds: number, maxSteps: number) =>
-    request<{ parallel: number; max_replan_rounds: number; max_steps: number }>('/config', {
+    request<{
+      parallel: number
+      max_replan_rounds: number
+      max_steps: number
+      agent_models: Record<string, string>
+    }>('/config'),
+  setConfig: (
+    parallel: number,
+    maxReplanRounds: number,
+    maxSteps: number,
+    agentModels: Record<string, string>,
+  ) =>
+    request<{
+      parallel: number
+      max_replan_rounds: number
+      max_steps: number
+      agent_models: Record<string, string>
+    }>('/config', {
       method: 'PUT',
-      body: JSON.stringify({ parallel, max_replan_rounds: maxReplanRounds, max_steps: maxSteps }),
+      body: JSON.stringify({
+        parallel,
+        max_replan_rounds: maxReplanRounds,
+        max_steps: maxSteps,
+        agent_models: agentModels,
+      }),
     }),
   approve: (threadId: string, decisions: ApprovalDecision[] | 'approve' | 'deny') =>
     request<ChatResponse>('/chat/approve', {

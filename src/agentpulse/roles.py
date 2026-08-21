@@ -101,11 +101,13 @@ class Planner:
         language: str = "zh",
         max_retries: int = 2,
         verbose: bool = False,
+        model: str | None = None,
     ) -> None:
         self.router = router
         self.language = language
         self.max_retries = max_retries
         self.verbose = verbose
+        self.model = model  # per-agent LLM override (None -> router default)
 
     def plan(self, objective: str) -> list[dict[str, Any]]:
         """Return a list of subtask dicts ({title, instruction, artifacts})."""
@@ -113,7 +115,7 @@ class Planner:
         messages = [{"role": "user", "content": PLANNER_PROMPT.format(objective=objective, language=lang)}]
         last_error = "no usable plan output"
         for attempt in range(1, self.max_retries + 1):
-            response = self.router.complete(messages, temperature=0.2)
+            response = self.router.complete(messages, temperature=0.2, model=self.model)
             content = response.get("content") or ""
             parsed = extract_json(content)
             subtasks = (parsed or {}).get("subtasks") if parsed else None
@@ -182,11 +184,13 @@ class Evaluator:
         language: str = "zh",
         max_retries: int = 2,
         verbose: bool = False,
+        model: str | None = None,
     ) -> None:
         self.router = router
         self.language = language
         self.max_retries = max_retries
         self.verbose = verbose
+        self.model = model  # per-agent LLM override (None -> router default)
 
     def evaluate(
         self,
@@ -206,7 +210,7 @@ class Evaluator:
         messages = [{"role": "user", "content": prompt}]
         last_error = "no usable verdict output"
         for attempt in range(1, self.max_retries + 1):
-            response = self.router.complete(messages, temperature=0.0)
+            response = self.router.complete(messages, temperature=0.0, model=self.model)
             content = response.get("content") or ""
             parsed = extract_json(content)
             if parsed is not None and "passed" in parsed:

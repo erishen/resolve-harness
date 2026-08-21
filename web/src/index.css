@@ -2487,3 +2487,31 @@ body {
   font-weight: 400;
   color: var(--text-dim);
 }
+
+.agent-model-row {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-model-label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.agent-model-input {
+  width: 100%;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.agent-model-input::placeholder {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
