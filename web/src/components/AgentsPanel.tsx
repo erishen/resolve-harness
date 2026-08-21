@@ -171,7 +171,7 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
             🔁 Specialist 循环 ≤{maxSteps} 步 · ⚙ 并行 ×{parallel} · ↻ 失败重试 {replan} 轮
           </span>
         </div>
-        <svg viewBox="0 0 700 720" width="100%" style={{ maxWidth: 700 }}>
+        <svg viewBox="-120 0 820 720" width="100%" style={{ maxWidth: 780 }}>
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-dim)" />
@@ -190,11 +190,12 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
             const labelX = (x1 + x2) / 2
             const labelY = (y1 + y2) / 2
             if (e.loop) {
-              // decision -> plan: 走 evaluate/decision 之间的走廊向上绕回，
-              // 避免穿过 Specialist（控制点保持在 x>x1-130 通道内）
-              const path = `M ${x1 - 60} ${y1} C ${x1 - 130} ${y1 - 20}, ${x1 - 130} ${y1 - 220}, ${x2 - 5} ${y2 + 28}`
-              const lx = x1 - 130
-              const ly = (y1 + y2) / 2 - 30
+              // decision -> plan：三段直线折线绕主链左外侧（x=-60），
+              // 不穿过任何节点；标签放在左侧垂直段
+              const outerX = x1 - 400 // decision x=340 -> -60（主链节点左缘 40 之外）
+              const path = `M ${x1 - 60} ${y1} L ${outerX} ${y1} L ${outerX} ${y2 + 28} L ${x2 - 5} ${y2 + 28}`
+              const lx = outerX
+              const ly = (y1 + y2) / 2
               return (
                 <g key={i}>
                   <path d={path} fill="none" stroke="var(--text-dim)" strokeWidth="1.4" markerEnd="url(#arrow)" strokeDasharray="5 4" />
