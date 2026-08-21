@@ -57,7 +57,7 @@ make web-dev
 - **工具**：列出项目提供的全部工具（`GET /api/tools`）——每个工具的名称、描述、参数（含必填）、审批标记，以及它在哪些模式可用（聊天 / 任务），支持按模式过滤。
 - **Agent**：任务流水线的四个角色（Planner / Specialist / Evaluator / Reporter）卡片 + Orchestrator 流程 SVG 图（含 Fast Path / codegen 短路、达标分支与失败重规划回环）。
 - **沙箱**：浏览 `data/sandbox/` 下的文件（按修改时间倒序，最新在最上），支持单个删除、一键清空；预览按类型渲染——markdown 渲染成文档、CSV/TSV 渲染成表格、HTML 在 iframe 中展示、图片直接显示、PDF 内嵌查看、JSON 自动格式化 + 语法高亮、代码（py/js/ts/go/rust…）语法高亮，文本类均可切回源码编辑，纯文本保持源码视图。
-- **设置**：运行时配置——全局默认模型（覆盖 .env `LLM_MODEL`，可清除回退）、四个 Agent（Planner/Specialist/Evaluator/Reporter）各自的独立 LLM 模型（留空跟随默认）、Specialist 循环步数上限 / 并行子任务数 N / 失败重试轮数。所有修改即时生效（下一任务起）并持久化到 `data/config.json`（`GET/PUT /api/config`）。
+- **设置**：运行时配置——模型库（多个命名模型，每个含 Base URL / 模型名 / API Key 环境变量名，key 本体放 .env 不落盘）、全局默认模型（覆盖 .env `LLM_MODEL`，可清除回退）、四个 Agent（Planner/Specialist/Evaluator/Reporter）各自选择模型库中的模型（留空跟随默认）、Specialist 循环步数上限 / 并行子任务数 N / 失败重试轮数。所有修改即时生效（下一任务起）并持久化到 `data/config.json`（`GET/PUT /api/config`）。
 
 右侧栏实时列出长期记忆（可删除），顶部「清空会话」重置短期记忆。Vite dev 已配置 `/api` 代理到后端，无需处理 CORS。
 

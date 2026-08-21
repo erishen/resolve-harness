@@ -16,6 +16,13 @@ import type {
 
 const BASE = '/api'
 
+export interface ModelProfile {
+  base_url: string
+  model: string
+  /** 环境变量名（实际 key 放 .env，不持久化明文） */
+  api_key_env: string
+}
+
 export interface AppConfig {
   parallel: number
   max_replan_rounds: number
@@ -23,6 +30,7 @@ export interface AppConfig {
   agent_models: Record<string, string>
   default_model: string
   active_model: string
+  models: Record<string, ModelProfile>
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -54,6 +62,7 @@ export const api = {
     maxSteps: number,
     agentModels?: Record<string, string>,
     defaultModel?: string,
+    models?: Record<string, ModelProfile>,
   ) =>
     request<AppConfig>('/config', {
       method: 'PUT',
@@ -63,6 +72,7 @@ export const api = {
         max_steps: maxSteps,
         ...(agentModels !== undefined ? { agent_models: agentModels } : {}),
         ...(defaultModel !== undefined ? { default_model: defaultModel } : {}),
+        ...(models !== undefined ? { models } : {}),
       }),
     }),
   approve: (threadId: string, decisions: ApprovalDecision[] | 'approve' | 'deny') =>

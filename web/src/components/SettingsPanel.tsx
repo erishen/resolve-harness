@@ -9,9 +9,40 @@ const AGENT_ROLES: { key: string; name: string; hint: string }[] = [
   { key: 'reporter', name: 'Reporter', hint: '汇总交付' },
 ]
 
-/** 设置 Tab：全局默认模型 + 各 Agent 独立 LLM + 运行参数。 */
+interface ProfileRow {
+  alias: string
+  base_url: string
+  model: string
+  api_key_env: string
+}
+
+function profilesToRows(models: Record<string, { base_url: string; model: string; api_key_env: string }>): ProfileRow[] {
+  return Object.entries(models ?? {}).map(([alias, p]) => ({
+    alias,
+    base_url: p.base_url ?? '',
+    model: p.model ?? '',
+    api_key_env: p.api_key_env ?? '',
+  }))
+}
+
+function rowsToProfiles(rows: ProfileRow[]): Record<string, { base_url: string; model: string; api_key_env: string }> {
+  const out: Record<string, { base_url: string; model: string; api_key_env: string }> = {}
+  for (const r of rows) {
+    const alias = r.alias.trim()
+    if (!alias || !r.model.trim()) continue
+    out[alias] = {
+      base_url: r.base_url.trim(),
+      model: r.model.trim(),
+      api_key_env: r.api_key_env.trim(),
+    }
+  }
+  return out
+}
+
+/** 设置 Tab：模型库（baseURL + Key + 模型名）+ 默认/各 Agent 模型 + 运行参数。 */
 export default function SettingsPanel() {
   const [cfg, setCfg] = useState<AppConfig | null>(null)
+  const [rows, setRows] = useState<ProfileRow[]>([])
   const [defaultModel, setDefaultModel] = useState('')
   const [agentModels, setAgentModels] = useState<Record<string, string>>({})
   const [parallel, setParallel] = useState(4)
@@ -28,6 +59,7 @@ export default function SettingsPanel() {
         const c = await api.getConfig()
         if (cancelled) return
         setCfg(c)
+        setRows(profilesToRows(c.models ?? {}))
         setDefaultModel(c.default_model)
         setAgentModels(c.agent_models ?? {})
         setParallel(c.parallel)
@@ -42,17 +74,28 @@ export default function SettingsPanel() {
     }
   }, [])
 
+  const aliases = rows.map((r) => r.alias.trim()).filter(Boolean)
+
   const save = async () => {
     setSaving(true)
     setMsg('')
     try {
-      const c = await api.setConfig(parallel, replan, maxSteps, agentModels, defaultModel)
+      const c = await api.setConfig(
+        parallel,
+        replan,
+        maxSteps,
+        agentModels,
+        defaultModel,
+        rowsToProfiles(rows),
+      )
       setCfg(c)
+      setRows(profilesToRows(c.models ?? {}))
       setDefaultModel(c.default_model)
       setAgentModels(c.agent_models ?? {})
-      const n = Object.keys(c.agent_models ?? {}).length
+      const n = Object.keys(c.models ?? {}).length
       setMsg(
-        `已保存：默认模型 ${c.active_model}${n ? ` · ${n} 个 Agent 独立模型` : ''}（重启后仍生效）`,
+        `已保存：默认模型 ${c.active_model} · 模型库 ${n} 个` +
+          `${Object.keys(c.agent_models ?? {}).length ? ` · ${Object.keys(c.agent_models ?? {}).length} 个 Agent 独立模型` : ''}（重启后仍生效）`,
       )
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e))
@@ -64,14 +107,75 @@ export default function SettingsPanel() {
   if (error) return <div className="error-banner">{error}</div>
   if (!cfg) return <div className="empty">加载中…</div>
 
+  const setRow = (i: number, key: keyof ProfileRow, value: string) =>
+    setRows((prev) => prev.map((r, j) => (j === i ? { ...r, [key]: value } : r)))
+
   return (
     <div className="settings-panel">
       <div className="agents-intro">
         <div className="tools-title">运行时设置</div>
         <div className="tools-hint">
-          修改即时生效（下一任务起）并持久化到 data/config.json · 留空 = 使用 .env 默认
+          修改即时生效（下一任务起）并持久化到 data/config.json · API Key 只填「环境变量名」，实际 key 放 .env
         </div>
       </div>
+
+      <section className="settings-section">
+        <div className="settings-section-title">模型库（baseURL + Key + 模型名）</div>
+        <div className="settings-profiles">
+          <div className="settings-profile-head">
+            <span>别名</span>
+            <span>Base URL</span>
+            <span>模型名</span>
+            <span>API Key（环境变量名）</span>
+            <span />
+          </div>
+          {rows.map((r, i) => (
+            <div key={i} className="settings-profile-row">
+              <input
+                className="settings-input"
+                placeholder="如 fast"
+                value={r.alias}
+                onChange={(e) => setRow(i, 'alias', e.target.value)}
+              />
+              <input
+                className="settings-input"
+                placeholder="https://api.example.com/v1"
+                value={r.base_url}
+                onChange={(e) => setRow(i, 'base_url', e.target.value)}
+              />
+              <input
+                className="settings-input"
+                placeholder="openai/gpt-4o-mini"
+                value={r.model}
+                onChange={(e) => setRow(i, 'model', e.target.value)}
+              />
+              <input
+                className="settings-input"
+                placeholder="如 OPENAI_API_KEY"
+                value={r.api_key_env}
+                onChange={(e) => setRow(i, 'api_key_env', e.target.value)}
+              />
+              <button
+                type="button"
+                className="settings-del"
+                onClick={() => setRows((prev) => prev.filter((_, j) => j !== i))}
+                title="删除该模型"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="settings-add"
+            onClick={() =>
+              setRows((prev) => [...prev, { alias: '', base_url: '', model: '', api_key_env: '' }])
+            }
+          >
+            + 添加模型
+          </button>
+        </div>
+      </section>
 
       <section className="settings-section">
         <div className="settings-section-title">默认模型</div>
@@ -83,12 +187,18 @@ export default function SettingsPanel() {
               {defaultModel ? '（来自配置覆盖）' : '（.env LLM_MODEL）'}
             </span>
           </span>
-          <input
+          <select
             className="settings-input"
-            placeholder="如 openai/gpt-4o-mini（空 = 用 .env LLM_MODEL）"
             value={defaultModel}
             onChange={(e) => setDefaultModel(e.target.value)}
-          />
+          >
+            <option value="">默认（.env LLM_MODEL）</option>
+            {aliases.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
         </label>
       </section>
 
@@ -100,14 +210,20 @@ export default function SettingsPanel() {
               {a.name}
               <span className="settings-hint">{a.hint}</span>
             </span>
-            <input
+            <select
               className="settings-input"
-              placeholder="默认"
               value={agentModels[a.key] ?? ''}
               onChange={(e) =>
                 setAgentModels((prev) => ({ ...prev, [a.key]: e.target.value }))
               }
-            />
+            >
+              <option value="">默认（跟随默认模型）</option>
+              {aliases.map((x) => (
+                <option key={x} value={x}>
+                  {x}
+                </option>
+              ))}
+            </select>
           </label>
         ))}
       </section>

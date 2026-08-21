@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from collections.abc import Sequence
 from typing import Any
@@ -79,6 +80,25 @@ class LiteLLMRouter:
         self.last_usage: dict[str, int] | None = None
         self.total_usage: dict[str, int] = {k: 0 for k in _USAGE_KEYS}
         self._usage_lock = threading.Lock()
+        # Named model profiles: {alias: {base_url, model, api_key_env}}.
+        # `complete(model=<alias>)` resolves the profile; api_key is read from
+        # the environment variable named by api_key_env (never persisted here).
+        self.models: dict[str, dict[str, str]] = {}
+
+    def set_models(self, profiles: dict[str, dict[str, str]]) -> None:
+        """Replace the named model profiles (thread-safe by replacement)."""
+        self.models = dict(profiles or {})
+
+    def _resolve(self, model: str | None) -> tuple[str, str | None, str | None]:
+        """Resolve a model alias to (litellm model, api_base, api_key)."""
+        name = model or self.settings.model
+        profile = (self.models or {}).get(name)
+        if not profile:
+            return name, self.settings.api_base, self.settings.api_key
+        base = profile.get("base_url") or self.settings.api_base
+        env_key = profile.get("api_key_env") or ""
+        key = os.environ.get(env_key) if env_key else ""
+        return profile.get("model") or name, base, key or self.settings.api_key
 
     # -- public API ------------------------------------------------------
 
@@ -95,25 +115,27 @@ class LiteLLMRouter:
 
         The message dict follows the OpenAI shape:
             {"role": "assistant", "content": ..., "tool_calls": [...]}
-        `model` overrides the router default per call (used for per-agent LLMs).
+        `model` overrides the router default per call — either a profile alias
+        (resolved via set_models) or a raw litellm model string.
         """
+        model_name, api_base, api_key = self._resolve(model)
         kwargs: dict[str, Any] = {
-            "model": model or self.settings.model,
+            "model": model_name,
             "messages": [dict(m) for m in messages],
             "temperature": self.settings.temperature if temperature is None else temperature,
             "max_tokens": self.settings.max_tokens if max_tokens is None else max_tokens,
         }
-        if self.settings.api_base:
-            kwargs["api_base"] = self.settings.api_base
-        if self.settings.api_key:
-            kwargs["api_key"] = self.settings.api_key
+        if api_base:
+            kwargs["api_base"] = api_base
+        if api_key:
+            kwargs["api_key"] = api_key
         if tools:
             kwargs["tools"] = tools
 
         try:
             resp = litellm.completion(**kwargs)
         except Exception as exc:  # noqa: BLE001 - surface provider errors uniformly
-            raise LLMError(f"LLM call failed ({self.settings.model}): {exc}") from exc
+            raise LLMError(f"LLM call failed ({model_name}): {exc}") from exc
 
         message = resp.choices[0].message
         raw: dict[str, Any] = {"role": "assistant", "content": message.content}

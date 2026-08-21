@@ -88,6 +88,11 @@ class ConfigUpdate(BaseModel):
         description="global default model override ('' = clear, back to .env LLM_MODEL; "
         'None = keep current)',
     )
+    models: dict[str, dict[str, str]] | None = Field(
+        default=None,
+        description="named model profiles {alias: {base_url, model, api_key_env}} "
+        '(None = keep current)',
+    )
 
 
 def _config_path() -> Path:
@@ -106,12 +111,13 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "max_steps": 10,  # specialist tool-loop step cap (planner/evaluator are single calls)
     "agent_models": {},  # per-agent LLM override (empty = router default)
     "default_model": "",  # global model override (empty = .env LLM_MODEL)
+    "models": {},  # named model profiles {alias: {base_url, model, api_key_env}}
 }
 
 
 def _load_config() -> dict[str, Any]:
     """Runtime config: parallel (4), replan rounds (1), steps (10),
-    agent models, default model."""
+    agent models, default model, model profiles."""
     cfg = json.loads(json.dumps(_DEFAULT_CONFIG))
     try:
         raw = json.loads(_config_path().read_text(encoding="utf-8"))
@@ -128,6 +134,20 @@ def _load_config() -> dict[str, Any]:
     dm = raw.get("default_model")
     if isinstance(dm, str):
         cfg["default_model"] = dm.strip()
+    mp = raw.get("models") or {}
+    if isinstance(mp, dict):
+        cleaned: dict[str, dict[str, str]] = {}
+        for alias, spec in mp.items():
+            if not isinstance(spec, dict):
+                continue
+            s = {
+                k: str(spec.get(k) or "").strip()
+                for k in ("base_url", "model", "api_key_env")
+                if spec.get(k)
+            }
+            if s:
+                cleaned[str(alias).strip()] = s
+        cfg["models"] = cleaned
     return cfg
 
 
@@ -238,6 +258,9 @@ def create_app(
     app.state.runner.max_replan_rounds = _cfg["max_replan_rounds"]
     app.state.runner.max_steps = _cfg["max_steps"]
     app.state.runner.set_agent_models(_cfg["agent_models"])
+    _set_models = getattr(app.state.runner.router, "set_models", None)
+    if _set_models:
+        _set_models(_cfg["models"])
     if _cfg["default_model"]:
         app.state.runner.router.settings.model = _cfg["default_model"]
     app.state.chat_history = chat_history or ChatHistoryStore()
@@ -379,48 +402,56 @@ def create_app(
     @app.get("/api/config")
     def config_get() -> dict[str, Any]:
         runner: TaskRunner = app.state.runner
+        cfg = _load_config()
         return {
             "parallel": runner.parallel,
             "max_replan_rounds": runner.max_replan_rounds,
             "max_steps": runner.max_steps,
             "agent_models": runner.agent_models,
-            "default_model": _load_config().get("default_model", ""),
+            "default_model": cfg.get("default_model", ""),
             "active_model": runner.router.settings.model,
+            "models": cfg.get("models", {}),
         }
 
     @app.put("/api/config")
     def config_update(req: ConfigUpdate) -> dict[str, Any]:
         """Update task runtime config (parallel fan-out, replan rounds, loop
-        step cap, per-agent LLM overrides, default model); applies to the next
-        task and persists across restarts. agent_models/default_model=None
-        keeps the current value."""
+        step cap, per-agent LLM overrides, default model, model profiles);
+        applies to the next task and persists across restarts. Optional
+        fields (agent_models/default_model/models=None) keep current values."""
         runner: TaskRunner = app.state.runner
         runner.parallel = req.parallel
         runner.max_replan_rounds = req.max_replan_rounds
         runner.max_steps = req.max_steps
         if req.agent_models is not None:
             runner.set_agent_models(req.agent_models)
+        if req.models is not None:
+            runner.router.set_models(req.models)
         if req.default_model is not None:
             # empty -> back to .env LLM_MODEL; non-empty -> live override
             runner.router.settings.model = req.default_model or app.state.env_model
+        prev = _load_config()
         _save_config(
             {
                 "parallel": runner.parallel,
                 "max_replan_rounds": runner.max_replan_rounds,
                 "max_steps": runner.max_steps,
                 "agent_models": runner.agent_models,
-                "default_model": _load_config().get("default_model", "")
+                "default_model": prev.get("default_model", "")
                 if req.default_model is None
                 else req.default_model,
+                "models": prev.get("models", {}) if req.models is None else req.models,
             }
         )
+        cur = _load_config()
         return {
             "parallel": runner.parallel,
             "max_replan_rounds": runner.max_replan_rounds,
             "max_steps": runner.max_steps,
             "agent_models": runner.agent_models,
-            "default_model": _load_config().get("default_model", ""),
+            "default_model": cur.get("default_model", ""),
             "active_model": runner.router.settings.model,
+            "models": cur.get("models", {}),
         }
 
     @app.delete("/api/chat/history")

@@ -2628,3 +2628,64 @@ body {
   font-size: 11px;
   color: var(--text-dim);
 }
+
+/* 设置页模型库 */
+.settings-profiles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-profile-head,
+.settings-profile-row {
+  display: grid;
+  grid-template-columns: 110px 1.4fr 1.2fr 1.2fr 28px;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings-profile-head {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding-bottom: 2px;
+}
+
+.settings-profile-row .settings-input {
+  max-width: none;
+}
+
+.settings-del {
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.settings-del:hover {
+  border-color: var(--danger, #c0392b);
+  color: var(--danger, #c0392b);
+}
+
+.settings-add {
+  align-self: flex-start;
+  margin-top: 4px;
+  font-size: 12px;
+  padding: 5px 12px;
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-add:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.settings-row select.settings-input {
+  appearance: auto;
+}

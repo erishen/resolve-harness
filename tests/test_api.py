@@ -557,3 +557,55 @@ class TestDefaultModel:
         assert r.json()["default_model"] == ""
         assert r.json()["active_model"] == env_model
         h.close()
+
+
+class TestModelProfiles:
+    def test_profiles_set_resolve_keep(self, tmp_path: Path, monkeypatch) -> None:
+        import agentpulse.api as api_mod
+
+        from agentpulse.chat_history import ChatHistoryStore
+        from agentpulse.harness import Harness
+
+        cfg = tmp_path / "config.json"
+        monkeypatch.setattr(api_mod, "_config_path", lambda: cfg)
+        h = Harness(memory_db=str(tmp_path / "m.db"))
+        c = TestClient(
+            create_app(harness=h, chat_history=ChatHistoryStore(str(tmp_path / "ch.db")))
+        )
+        assert c.get("/api/config").json()["models"] == {}
+
+        r = c.put(
+            "/api/config",
+            json={
+                "parallel": 4,
+                "max_replan_rounds": 1,
+                "max_steps": 10,
+                "models": {
+                    "fast": {
+                        "base_url": "http://localhost:11434/v1",
+                        "model": "openai/qwen2.5",
+                        "api_key_env": "OPENAI_API_KEY",
+                    }
+                },
+            },
+        )
+        assert r.status_code == 200
+        assert r.json()["models"]["fast"]["model"] == "openai/qwen2.5"
+        assert '"fast"' in cfg.read_text(encoding="utf-8")
+
+        # runtime: router holds the profile and resolves it
+        router = c.app.state.runner.router
+        assert router.models["fast"]["base_url"] == "http://localhost:11434/v1"
+        name, base, _key = router._resolve("fast")
+        assert name == "openai/qwen2.5" and base == "http://localhost:11434/v1"
+        # unknown alias passes through as a raw model string with settings defaults
+        name, base, _key = router._resolve("nope")
+        assert name == "nope" and base == router.settings.api_base
+
+        # models untouched when omitted
+        c.put(
+            "/api/config",
+            json={"parallel": 4, "max_replan_rounds": 1, "max_steps": 10},
+        )
+        assert c.get("/api/config").json()["models"]["fast"]["model"] == "openai/qwen2.5"
+        h.close()
