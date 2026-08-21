@@ -129,6 +129,15 @@ export default function SettingsPanel() {
             <span>API Key（环境变量名）</span>
             <span />
           </div>
+          <div className="settings-profile-row settings-env-row" title="来自 .env 的默认模型（只读）">
+            <span className="settings-env-alias">.env 默认</span>
+            <span className="settings-env-value">{cfg.env_model?.base_url || '—'}</span>
+            <span className="settings-env-value">{cfg.env_model?.model || '—'}</span>
+            <span className="settings-env-value">
+              {cfg.env_model?.api_key_env || 'LLM_API_KEY'}（.env 内）
+            </span>
+            <span />
+          </div>
           {rows.map((r, i) => (
             <div key={i} className="settings-profile-row">
               <input

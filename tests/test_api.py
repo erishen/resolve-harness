@@ -609,3 +609,20 @@ class TestModelProfiles:
         )
         assert c.get("/api/config").json()["models"]["fast"]["model"] == "openai/qwen2.5"
         h.close()
+
+    def test_env_model_exposed(self, tmp_path: Path, monkeypatch) -> None:
+        import agentpulse.api as api_mod
+
+        from agentpulse.chat_history import ChatHistoryStore
+        from agentpulse.harness import Harness
+
+        cfg = tmp_path / "config.json"
+        monkeypatch.setattr(api_mod, "_config_path", lambda: cfg)
+        h = Harness(memory_db=str(tmp_path / "m.db"))
+        c = TestClient(
+            create_app(harness=h, chat_history=ChatHistoryStore(str(tmp_path / "ch.db")))
+        )
+        env = c.get("/api/config").json()["env_model"]
+        assert env["model"] == c.app.state.env_model
+        assert env["api_key_env"] == "LLM_API_KEY"
+        h.close()

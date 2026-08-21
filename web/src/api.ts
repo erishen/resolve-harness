@@ -31,6 +31,8 @@ export interface AppConfig {
   default_model: string
   active_model: string
   models: Record<string, ModelProfile>
+  /** .env 默认模型（LLM_MODEL / LLM_API_BASE / LLM_API_KEY），只读展示 */
+  env_model: { base_url: string; model: string; api_key_env: string }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

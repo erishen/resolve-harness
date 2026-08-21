@@ -2689,3 +2689,25 @@ body {
 .settings-row select.settings-input {
   appearance: auto;
 }
+
+.settings-env-row {
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--chip);
+}
+
+.settings-env-alias {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settings-env-value {
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

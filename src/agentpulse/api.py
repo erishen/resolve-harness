@@ -411,6 +411,11 @@ def create_app(
             "default_model": cfg.get("default_model", ""),
             "active_model": runner.router.settings.model,
             "models": cfg.get("models", {}),
+            "env_model": {
+                "base_url": runner.router.settings.api_base or "",
+                "model": app.state.env_model,
+                "api_key_env": "LLM_API_KEY",
+            },
         }
 
     @app.put("/api/config")
