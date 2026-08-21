@@ -82,7 +82,7 @@ class ConfigUpdate(BaseModel):
 
 def _config_path() -> Path:
     """Runtime config file: data/config.json (parallel count, replan rounds,
-    loop step cap)."""
+    specialist loop step cap)."""
     here = Path(__file__).resolve().parent
     root = here.parent.parent
     return root / "data" / "config.json"
@@ -91,7 +91,7 @@ def _config_path() -> Path:
 _DEFAULT_CONFIG: dict[str, int] = {
     "parallel": 4,  # Specialist fan-out
     "max_replan_rounds": 1,  # evaluator-fail replan rounds (anti-runaway)
-    "max_steps": 10,  # per-agent loop step cap
+    "max_steps": 10,  # specialist tool-loop step cap (planner/evaluator are single calls)
 }
 
 

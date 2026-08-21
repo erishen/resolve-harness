@@ -127,7 +127,7 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
       setReplan(cfg.max_replan_rounds)
       setMaxSteps(cfg.max_steps)
       setConfigMsg(
-        `已保存：循环 ≤${cfg.max_steps} 步 · 并行 ×${cfg.parallel} · 失败重试 ${cfg.max_replan_rounds} 轮（重启后仍生效）`,
+        `已保存：Specialist 循环 ≤${cfg.max_steps} 步 · 并行 ×${cfg.parallel} · 失败重试 ${cfg.max_replan_rounds} 轮（重启后仍生效）`,
       )
     } catch (e) {
       setConfigMsg(e instanceof Error ? e.message : String(e))
@@ -178,7 +178,7 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
         <div className="graph-title">
           Orchestrator 流程
           <span className="graph-stats">
-            🔁 循环 ≤{maxSteps} 步/Agent · ⚙ 并行 ×{parallel} · ↻ 失败重试 {replan} 轮
+            🔁 Specialist 循环 ≤{maxSteps} 步 · ⚙ 并行 ×{parallel} · ↻ 失败重试 {replan} 轮
           </span>
         </div>
         <svg viewBox="0 0 680 700" width="100%" style={{ maxWidth: 680 }}>
@@ -277,7 +277,7 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
           })}
         </svg>
         <div className="parallel-row">
-          <span className="parallel-label">🔁 Agent 循环步数上限</span>
+          <span className="parallel-label">🔁 Specialist 循环步数上限</span>
           <input
             type="number"
             min={1}
