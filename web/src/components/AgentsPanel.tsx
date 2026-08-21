@@ -81,7 +81,6 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
   const [parallel, setParallel] = useState(4)
   const [replan, setReplan] = useState(1)
   const [maxSteps, setMaxSteps] = useState(10)
-  const [agentModels, setAgentModels] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [configMsg, setConfigMsg] = useState('')
 
@@ -109,7 +108,6 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
           setParallel(cfg.parallel)
           setReplan(cfg.max_replan_rounds)
           setMaxSteps(cfg.max_steps)
-          setAgentModels(cfg.agent_models ?? {})
         }
       } catch {
         /* backend down */
@@ -124,15 +122,13 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
     setSaving(true)
     setConfigMsg('')
     try {
-      const cfg = await api.setConfig(parallel, replan, maxSteps, agentModels)
+      // only the numeric params live here; agent models are managed in Settings
+      const cfg = await api.setConfig(parallel, replan, maxSteps)
       setParallel(cfg.parallel)
       setReplan(cfg.max_replan_rounds)
       setMaxSteps(cfg.max_steps)
-      setAgentModels(cfg.agent_models ?? {})
-      const modelCount = Object.keys(cfg.agent_models ?? {}).length
       setConfigMsg(
-        `已保存：Specialist 循环 ≤${cfg.max_steps} 步 · 并行 ×${cfg.parallel} · 失败重试 ${cfg.max_replan_rounds} 轮` +
-          (modelCount ? ` · ${modelCount} 个 Agent 使用独立模型（重启后仍生效）` : '（重启后仍生效）'),
+        `已保存：Specialist 循环 ≤${cfg.max_steps} 步 · 并行 ×${cfg.parallel} · 失败重试 ${cfg.max_replan_rounds} 轮（重启后仍生效）`,
       )
     } catch (e) {
       setConfigMsg(e instanceof Error ? e.message : String(e))
@@ -175,17 +171,9 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
             </div>
             <div className="agent-desc">{a.description}</div>
             <div className="agent-tools">🛠 {a.tools}</div>
-            <label className="agent-model-row">
-              <span className="agent-model-label">LLM 模型（空 = 默认）</span>
-              <input
-                className="agent-model-input"
-                placeholder="默认"
-                value={agentModels[a.phase] ?? ''}
-                onChange={(e) =>
-                  setAgentModels((prev) => ({ ...prev, [a.phase]: e.target.value }))
-                }
-              />
-            </label>
+            <div className="agent-model-note">
+              🧠 模型配置见「设置」Tab（此角色当前用默认或已配置的独立模型）
+            </div>
           </div>
         ))}
       </div>

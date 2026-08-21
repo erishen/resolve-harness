@@ -16,6 +16,15 @@ import type {
 
 const BASE = '/api'
 
+export interface AppConfig {
+  parallel: number
+  max_replan_rounds: number
+  max_steps: number
+  agent_models: Record<string, string>
+  default_model: string
+  active_model: string
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -38,31 +47,22 @@ export const api = {
     request<{ deleted: number }>('/chat/history', { method: 'DELETE' }),
   tools: () => request<{ tools: ToolInfo[] }>('/tools'),
   agents: () => request<AgentsResponse>('/agents'),
-  getConfig: () =>
-    request<{
-      parallel: number
-      max_replan_rounds: number
-      max_steps: number
-      agent_models: Record<string, string>
-    }>('/config'),
+  getConfig: () => request<AppConfig>('/config'),
   setConfig: (
     parallel: number,
     maxReplanRounds: number,
     maxSteps: number,
-    agentModels: Record<string, string>,
+    agentModels?: Record<string, string>,
+    defaultModel?: string,
   ) =>
-    request<{
-      parallel: number
-      max_replan_rounds: number
-      max_steps: number
-      agent_models: Record<string, string>
-    }>('/config', {
+    request<AppConfig>('/config', {
       method: 'PUT',
       body: JSON.stringify({
         parallel,
         max_replan_rounds: maxReplanRounds,
         max_steps: maxSteps,
-        agent_models: agentModels,
+        ...(agentModels !== undefined ? { agent_models: agentModels } : {}),
+        ...(defaultModel !== undefined ? { default_model: defaultModel } : {}),
       }),
     }),
   approve: (threadId: string, decisions: ApprovalDecision[] | 'approve' | 'deny') =>

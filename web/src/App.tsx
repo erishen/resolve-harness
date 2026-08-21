@@ -6,10 +6,19 @@ import HistoryPanel from './components/HistoryPanel'
 import PluginPanel from './components/PluginPanel'
 import TaskPanel from './components/TaskPanel'
 import SandboxPanel from './components/SandboxPanel'
+import SettingsPanel from './components/SettingsPanel'
 import ToolsPanel from './components/ToolsPanel'
 import type { MemoryRow } from './types'
 
-type Mode = 'task' | 'chat' | 'history' | 'plugins' | 'tools' | 'agents' | 'sandbox'
+type Mode =
+  | 'task'
+  | 'chat'
+  | 'history'
+  | 'plugins'
+  | 'tools'
+  | 'agents'
+  | 'sandbox'
+  | 'settings'
 
 /** 工具 Tab 的外部初始过滤（Agent Tab 点击 Specialist 时锁定"任务"）。 */
 type ToolsFilter = 'all' | 'chat' | 'task' | 'approval'
@@ -138,6 +147,12 @@ export default function App() {
             >
               沙箱
             </button>
+            <button
+              className={mode === 'settings' ? 'active' : ''}
+              onClick={() => setMode('settings')}
+            >
+              设置
+            </button>
           </nav>
           {model && <span className="model-tag">{model}</span>}
         </header>
@@ -159,6 +174,8 @@ export default function App() {
           />
         ) : mode === 'sandbox' ? (
           <SandboxPanel />
+        ) : mode === 'settings' ? (
+          <SettingsPanel />
         ) : (
           <PluginPanel />
         )}

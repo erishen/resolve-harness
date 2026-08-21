@@ -48,7 +48,7 @@ cd web && pnpm install        # 首次
 make web-dev
 ```
 
-打开 http://localhost:5173 即可使用，共**七个 Tab**（聊天为默认，第一个）：
+打开 http://localhost:5173 即可使用，共**八个 Tab**（聊天为默认，第一个）：
 
 - **任务**（多 Agent 工作台）：顶部是示例卡片（内置 + 「重新生成」按钮让模型生成一批新的、可执行的示例），内置示例覆盖计算 / 文档 / 代码 / 联网抓取（海外 JD 列表、A 股实时行情、美元汇率，均走 fetch 工具）等类型；卡片可单击填入、双击直接运行，也可 hover 删除——删除会持久化（内置/生成都能删，刷新后不再出现），且已删示例会作为「负面清单」注入重新生成的 prompt，避免模型再产出类似任务；输入一个目标后，**Planner 拆解子任务 → Specialist 逐个执行（工具循环）→ Evaluator 验收**（不达标自动打回重规划，最多 1 轮）→ **Reporter 汇成交付**。每一步（计划 / 子任务进度 / 思考 / 工具调用 / 验收结论）通过 SSE 实时流式显示为任务树，交付支持 markdown。若目标是确定性查询（如「计算 2+3」），会直接走 Fast Path 秒回，任务树依然完整展示并标注「零模型」。
 - **聊天**：一问一答，工具调用以回复下方的小标签展示；确定性查询同样走 Fast Path，无需等模型。
@@ -57,6 +57,7 @@ make web-dev
 - **工具**：列出项目提供的全部工具（`GET /api/tools`）——每个工具的名称、描述、参数（含必填）、审批标记，以及它在哪些模式可用（聊天 / 任务），支持按模式过滤。
 - **Agent**：任务流水线的四个角色（Planner / Specialist / Evaluator / Reporter）卡片 + Orchestrator 流程 SVG 图（含 Fast Path / codegen 短路、达标分支与失败重规划回环）。
 - **沙箱**：浏览 `data/sandbox/` 下的文件（按修改时间倒序，最新在最上），支持单个删除、一键清空；预览按类型渲染——markdown 渲染成文档、CSV/TSV 渲染成表格、HTML 在 iframe 中展示、图片直接显示、PDF 内嵌查看、JSON 自动格式化 + 语法高亮、代码（py/js/ts/go/rust…）语法高亮，文本类均可切回源码编辑，纯文本保持源码视图。
+- **设置**：运行时配置——全局默认模型（覆盖 .env `LLM_MODEL`，可清除回退）、四个 Agent（Planner/Specialist/Evaluator/Reporter）各自的独立 LLM 模型（留空跟随默认）、Specialist 循环步数上限 / 并行子任务数 N / 失败重试轮数。所有修改即时生效（下一任务起）并持久化到 `data/config.json`（`GET/PUT /api/config`）。
 
 右侧栏实时列出长期记忆（可删除），顶部「清空会话」重置短期记忆。Vite dev 已配置 `/api` 代理到后端，无需处理 CORS。
 
