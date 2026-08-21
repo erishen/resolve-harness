@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import type { AppConfig } from '../api'
+import type { AppConfig, ModelProfile } from '../api'
 
 const AGENT_ROLES: { key: string; name: string; hint: string }[] = [
   { key: 'planner', name: 'Planner', hint: '拆解目标' },
@@ -39,6 +39,24 @@ function rowsToProfiles(rows: ProfileRow[]): Record<string, { base_url: string; 
   return out
 }
 
+/**
+ * 归一化后的模型库：只保留「别名+模型名都完整」的 profile，且空 base_url /
+ * api_key_env 直接剔除（连 key 都不留）——与后端 _load_config 的清洗逻辑保持
+ * 一致。用它来比较与提交，可避免「前端含空串 vs 后端已丢弃空串」导致的无限
+ * 保存循环。
+ */
+function buildModels(rows: ProfileRow[]): Record<string, ModelProfile> {
+  const raw = rowsToProfiles(rows)
+  const out: Record<string, ModelProfile> = {}
+  for (const [alias, p] of Object.entries(raw)) {
+    const m: Partial<ModelProfile> = { model: p.model }
+    if (p.base_url) m.base_url = p.base_url
+    if (p.api_key_env) m.api_key_env = p.api_key_env
+    out[alias] = m as ModelProfile
+  }
+  return out
+}
+
 /** 数字输入上下限：即时 clamp 到 [min,max]，允许清空编辑，失焦补回下限。 */
 function clampNum(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n))
@@ -57,6 +75,32 @@ function numOnChange(setter: (v: string) => void, min: number, max: number) {
   }
 }
 
+/** 递归、按 key 排序的 JSON 序列化，保证对象 key 顺序不影响比较结果
+ * （前端 buildModels 与后端 _load_config 的 key 顺序不同，必须排序才能
+ * 让「未变化则跳过保存」的判断成立）。 */
+function stableStringify(v: unknown): string {
+  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']'
+  if (v && typeof v === 'object') {
+    const entries = Object.entries(v as Record<string, unknown>)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, val]) => JSON.stringify(k) + ':' + stableStringify(val))
+    return '{' + entries.join(',') + '}'
+  }
+  return JSON.stringify(v)
+}
+
+/** 把完整配置序列化成稳定字符串，用于判断「相对上次保存是否真的变了」。 */
+function serializeConfig(
+  parallel: number,
+  maxReplan: number,
+  maxSteps: number,
+  agentModels: Record<string, string>,
+  defaultModel: string,
+  models: Record<string, ModelProfile>,
+): string {
+  return stableStringify({ parallel, maxReplan, maxSteps, agentModels, defaultModel, models })
+}
+
 /** 失焦：空串补回下限。 */
 function numOnBlur(setter: (v: string) => void, current: string, min: number) {
   return () => {
@@ -64,8 +108,9 @@ function numOnBlur(setter: (v: string) => void, current: string, min: number) {
   }
 }
 
-/** 设置 Tab：模型库（baseURL + Key + 模型名）+ 默认/各 Agent 模型 + 运行参数。 */
-export default function SettingsPanel() {
+/** 设置 Tab：模型库（baseURL + Key + 模型名）+ 默认/各 Agent 模型 + 运行参数。
+ * @param onModelChange 任意配置保存成功后触发，通知外层刷新顶栏「当前模型」tag。 */
+export default function SettingsPanel({ onModelChange }: { onModelChange?: () => void }) {
   const [cfg, setCfg] = useState<AppConfig | null>(null)
   const [rows, setRows] = useState<ProfileRow[]>([])
   const [defaultModel, setDefaultModel] = useState('')
@@ -74,9 +119,11 @@ export default function SettingsPanel() {
   const [parallel, setParallel] = useState('4')
   const [replan, setReplan] = useState('1')
   const [maxSteps, setMaxSteps] = useState('10')
-  const [saving, setSaving] = useState(false)
+  const [autoSaving, setAutoSaving] = useState(false)
   const [msg, setMsg] = useState('')
   const [error, setError] = useState('')
+  // 上次成功保存到后端的完整配置（序列化），用于判断是否需要触发自动保存。
+  const lastSavedRef = useRef<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -91,6 +138,18 @@ export default function SettingsPanel() {
         setParallel(String(c.parallel))
         setReplan(String(c.max_replan_rounds))
         setMaxSteps(String(c.max_steps))
+        // 以「后端读到的、已清洗的配置」为基准，避免加载后立刻误触发保存。
+        // （此处不能用 buildModels(rows)：load effect 闭包里的 rows 仍是初始
+        // 空值，setState 不会更新已运行函数内的变量；而 c.models 已是后端归一
+        // 化结果，与后续 buildModels(profilesToRows(c.models)) 完全等价。）
+        lastSavedRef.current = serializeConfig(
+          c.parallel,
+          c.max_replan_rounds,
+          c.max_steps,
+          c.agent_models ?? {},
+          c.default_model ?? '',
+          c.models ?? {},
+        )
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
       }
@@ -100,38 +159,65 @@ export default function SettingsPanel() {
     }
   }, [])
 
-  const aliases = rows.map((r) => r.alias.trim()).filter(Boolean)
+  // 即时自动保存：任一设置项变化后防抖 600ms 提交全量配置；与 lastSavedRef
+  // 比对，未变化则不发请求。未加载完成（cfg 为 null）不触发。
+  useEffect(() => {
+    if (!cfg) return
+    const models = buildModels(rows)
+    const candidate = serializeConfig(
+      clampNum(Number(parallel) || 4, 1, 16),
+      clampNum(Number(replan) || 1, 0, 5),
+      clampNum(Number(maxSteps) || 10, 1, 50),
+      agentModels,
+      defaultModel,
+      models,
+    )
+    if (candidate === lastSavedRef.current) return
+    const t = setTimeout(() => {
+      ;(async () => {
+        setAutoSaving(true)
+        try {
+          const c = await api.setConfig(
+            clampNum(Number(parallel) || 4, 1, 16),
+            clampNum(Number(replan) || 1, 0, 5),
+            clampNum(Number(maxSteps) || 10, 1, 50),
+            agentModels,
+            defaultModel,
+            models,
+          )
+          setCfg(c)
+          lastSavedRef.current = serializeConfig(
+            c.parallel,
+            c.max_replan_rounds,
+            c.max_steps,
+            c.agent_models ?? {},
+            c.default_model ?? '',
+            c.models ?? {},
+          )
+          setMsg('已自动保存 · 下一任务起生效')
+          // 默认模型 / 模型库可能已变化，通知外层刷新顶栏当前模型 tag。
+          onModelChange?.()
+        } catch (e) {
+          const raw = e instanceof Error ? e.message : String(e)
+          let detail = raw
+          const m = raw.match(/^\d+\s+(\{.*\})$/)
+          if (m) {
+            try {
+              detail = JSON.parse(m[1]).detail || raw
+            } catch {
+              /* 解析失败则用原始文案 */
+            }
+          }
+          setMsg(`保存失败：${detail}`)
+        } finally {
+          setAutoSaving(false)
+        }
+      })()
+    }, 600)
+    return () => clearTimeout(t)
+  }, [cfg, rows, defaultModel, agentModels, parallel, replan, maxSteps])
 
-  const save = async () => {
-    setSaving(true)
-    setMsg('')
-    try {
-      const c = await api.setConfig(
-        clampNum(Number(parallel) || 4, 1, 16),
-        clampNum(Number(replan) || 1, 0, 5),
-        clampNum(Number(maxSteps) || 10, 1, 50),
-        agentModels,
-        defaultModel,
-        rowsToProfiles(rows),
-      )
-      setCfg(c)
-      setRows(profilesToRows(c.models ?? {}))
-      setDefaultModel(c.default_model)
-      setAgentModels(c.agent_models ?? {})
-      setParallel(String(c.parallel))
-      setReplan(String(c.max_replan_rounds))
-      setMaxSteps(String(c.max_steps))
-      const n = Object.keys(c.models ?? {}).length
-      setMsg(
-        `已保存：默认模型 ${c.active_model} · 模型库 ${n} 个` +
-          `${Object.keys(c.agent_models ?? {}).length ? ` · ${Object.keys(c.agent_models ?? {}).length} 个 Agent 独立模型` : ''}（重启后仍生效）`,
-      )
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSaving(false)
-    }
-  }
+  const aliases = Object.keys(buildModels(rows))
 
   if (error) return <div className="error-banner">{error}</div>
   if (!cfg) return <div className="empty">加载中…</div>
@@ -144,7 +230,7 @@ export default function SettingsPanel() {
       <div className="agents-intro">
         <div className="tools-title">运行时设置</div>
         <div className="tools-hint">
-          修改即时生效（下一任务起）并持久化到 data/config.json · API Key 只填「环境变量名」，实际 key 放 .env
+          修改即时自动保存并持久化到 data/config.json（下一任务起生效）· API Key 可直接粘贴密钥，或填环境变量名（如 OPENAI_API_KEY）从 .env 读取；留空则使用 .env 默认密钥
         </div>
       </div>
 
@@ -155,7 +241,7 @@ export default function SettingsPanel() {
             <span>别名</span>
             <span>Base URL</span>
             <span>模型名</span>
-            <span>API Key（环境变量名）</span>
+            <span>API Key（可粘贴密钥 / 环境变量名）</span>
             <span />
           </div>
           <div className="settings-profile-row settings-env-row" title="来自 .env 的默认模型（只读）">
@@ -189,7 +275,9 @@ export default function SettingsPanel() {
               />
               <input
                 className="settings-input"
-                placeholder="如 OPENAI_API_KEY"
+                type="password"
+                autoComplete="off"
+                placeholder="sk-... 或直接粘贴密钥 / OPENAI_API_KEY"
                 value={r.api_key_env}
                 onChange={(e) => setRow(i, 'api_key_env', e.target.value)}
               />
@@ -318,10 +406,9 @@ export default function SettingsPanel() {
       </section>
 
       <div className="settings-actions">
-        <button onClick={() => void save()} disabled={saving}>
-          {saving ? '保存中…' : '保存设置'}
-        </button>
-        {msg && <span className="settings-msg">{msg}</span>}
+        <span className="settings-autosave">
+          {autoSaving ? '保存中…' : msg ? msg : '修改即时自动保存'}
+        </span>
       </div>
     </div>
   )

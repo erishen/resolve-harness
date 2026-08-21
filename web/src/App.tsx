@@ -58,15 +58,29 @@ export default function App() {
     }
   }, [])
 
+  /** 重新拉取「当前生效模型」并写回顶栏 tag。
+   *  默认模型若指向模型库别名（如 sensenova-deepseek），则解析为别名对应的
+   *  真实模型名展示，与设置页「当前生效」保持一致；否则显示 .env 原始模型。 */
+  const refreshModel = useCallback(async () => {
+    try {
+      const c = await api.getConfig()
+      const active = c.active_model || ''
+      const prof = (c.models ?? {})[active]
+      setModel(prof?.model || active)
+    } catch {
+      /* backend down — keep stale tag */
+    }
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
-        const [health, state] = await Promise.all([api.health(), api.state()])
+        const [_, state] = await Promise.all([api.health(), api.state()])
         if (cancelled) return
         setOnline(true)
-        setModel(health.model)
         setMemories(sortMemories(state.memories))
+        void refreshModel()
       } catch {
         if (!cancelled) setOnline(false)
       }
@@ -74,7 +88,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [refreshModel])
 
   const forgetMemory = async (key: string) => {
     try {
@@ -171,11 +185,13 @@ export default function App() {
               setToolsFilter('task')
               setMode('tools')
             }}
+            onGoPlugins={() => setMode('plugins')}
+            onGoSettings={() => setMode('settings')}
           />
         ) : mode === 'sandbox' ? (
           <SandboxPanel />
         ) : mode === 'settings' ? (
-          <SettingsPanel />
+          <SettingsPanel onModelChange={() => void refreshModel()} />
         ) : (
           <PluginPanel />
         )}

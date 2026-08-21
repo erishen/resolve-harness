@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
+import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -27,6 +29,14 @@ litellm.drop_params = True
 
 # keys we track per call (OpenAI-compatible usage shape)
 _USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
+
+# 速率限制重试：厂商配额（RPM/TPM）耗尽时指数退避后自动重试，让短暂的配额
+# 窗口自行恢复，而不是一次失败就中断整轮。
+_RATE_LIMIT_MAX_RETRIES = 3
+_RATE_LIMIT_BACKOFF = 1.5  # 秒，按 2 的幂递增：1.5 / 3 / 6 …
+
+# 合法环境变量名：字母/下划线开头，仅含字母、数字、下划线。
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class LLMError(RuntimeError):
@@ -90,15 +100,35 @@ class LiteLLMRouter:
         self.models = dict(profiles or {})
 
     def _resolve(self, model: str | None) -> tuple[str, str | None, str | None]:
-        """Resolve a model alias to (litellm model, api_base, api_key)."""
+        """Resolve a model alias to (litellm model, api_base, api_key).
+
+        A profile's ``api_key_env`` accepts *either* a direct secret or an
+        environment-variable name (litellm-compatible semantics):
+          - empty            -> fall back to the global .env default (settings.api_key)
+          - "OPENAI_API_KEY" -> resolved from os.environ when that var is set
+          - a raw key        -> used verbatim
+        """
         name = model or self.settings.model
         profile = (self.models or {}).get(name)
         if not profile:
-            return name, self.settings.api_base, self.settings.api_key
-        base = profile.get("base_url") or self.settings.api_base
-        env_key = profile.get("api_key_env") or ""
-        key = os.environ.get(env_key) if env_key else ""
-        return profile.get("model") or name, base, key or self.settings.api_key
+            model_name, base, key = name, self.settings.api_base, self.settings.api_key
+        else:
+            base = profile.get("base_url") or self.settings.api_base
+            spec = (profile.get("api_key_env") or "").strip()
+            if not spec:
+                key = self.settings.api_key
+            elif _ENV_NAME_RE.match(spec) and os.environ.get(spec):
+                key = os.environ.get(spec)
+            else:
+                # 直接密钥；填了 env 名却未在 .env 设置时也按字面密钥使用。
+                key = spec
+            model_name = profile.get("model") or name
+        # 自定义 OpenAI 兼容网关（base_url 非空）下，litellm 需要明确的
+        # provider 前缀；模型名未带前缀（无 '/'）时默认补 `openai/`，否则会报
+        # "LLM Provider NOT provided"。已带前缀（如 openai/、deepseek/）原样。
+        if base and "/" not in model_name:
+            model_name = "openai/" + model_name
+        return model_name, base, key
 
     # -- public API ------------------------------------------------------
 
@@ -131,11 +161,31 @@ class LiteLLMRouter:
             kwargs["api_key"] = api_key
         if tools:
             kwargs["tools"] = tools
+        # 关掉 litellm 自带重试，改由下方统一退避重试，避免双重退避叠加等待。
+        kwargs["num_retries"] = 0
 
-        try:
-            resp = litellm.completion(**kwargs)
-        except Exception as exc:  # noqa: BLE001 - surface provider errors uniformly
-            raise LLMError(f"LLM call failed ({model_name}): {exc}") from exc
+        last_exc: Exception | None = None
+        for attempt in range(_RATE_LIMIT_MAX_RETRIES + 1):
+            try:
+                resp = litellm.completion(**kwargs)
+                break
+            except litellm.RateLimitError as exc:  # 配额耗尽：退避后重试
+                last_exc = exc
+                if attempt < _RATE_LIMIT_MAX_RETRIES:
+                    wait = _RATE_LIMIT_BACKOFF * (2 ** attempt)
+                    logger.warning(
+                        "LLM 速率限制（%s，第 %d/%d 次），%.1fs 后重试：%s",
+                        model_name, attempt + 1, _RATE_LIMIT_MAX_RETRIES, wait, exc,
+                    )
+                    time.sleep(wait)
+                    continue
+                raise LLMError(
+                    f"LLM call failed ({model_name}): 速率限制重试耗尽 - {exc}"
+                ) from exc
+            except Exception as exc:  # noqa: BLE001 - surface other provider errors uniformly
+                raise LLMError(f"LLM call failed ({model_name}): {exc}") from exc
+        else:  # 不应到达（循环内已 break 或 raise），兜底
+            raise LLMError(f"LLM call failed ({model_name}): {last_exc}") from last_exc
 
         message = resp.choices[0].message
         raw: dict[str, Any] = {"role": "assistant", "content": message.content}

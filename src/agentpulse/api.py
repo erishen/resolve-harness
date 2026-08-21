@@ -373,6 +373,9 @@ def create_app(
             {"from": "decision", "to": "report", "label": "通过"},
             {"from": "decision", "to": "plan", "label": "未通过（带反馈\n重规划，限轮次）", "loop": True},
             {"from": "report", "to": "end", "label": "最终交付"},
+            # 异常出口：plan→execute→evaluate→replan 任一环节抛异常都会落入 error
+            #（tasks.py 顶层 try/except 置 status="error"），error 为红色失败终止节点。
+            {"from": "evaluate", "to": "error", "label": "异常"},
         ]
         agents = [
             {
