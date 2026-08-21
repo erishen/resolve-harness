@@ -129,6 +129,16 @@ class LongTermMemory:
             self._conn.commit()
         return cur.rowcount > 0
 
+    def clear(self, scope: str | None = None) -> int:
+        """Delete all memories (optionally limited to one scope)."""
+        with self._lock:
+            if scope is None:
+                cur = self._conn.execute("DELETE FROM memories")
+            else:
+                cur = self._conn.execute("DELETE FROM memories WHERE scope = ?", (scope,))
+            self._conn.commit()
+        return cur.rowcount
+
     def count(self, scope: str | None = None) -> int:
         with self._lock:
             if scope is None:

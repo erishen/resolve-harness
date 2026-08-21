@@ -199,3 +199,49 @@ class TestLoop:
         ]
         assert assistant_call_ids, "expected assistant tool_calls in the 2nd call"
         assert tool_msgs[0]["tool_call_id"] == assistant_call_ids[0]
+
+
+class TestHistoryTrim:
+    """_trim_history bounds what is sent to the LLM without breaking tool pairing."""
+
+    def test_short_history_untouched(self) -> None:
+        from agentpulse.graph.loop import _trim_history
+
+        msgs = [HumanMessage(content=f"q{i}") for i in range(5)]
+        out = _trim_history(msgs)
+        assert out == msgs  # under the cap: identical list
+
+    def test_trims_oldest_beyond_cap(self) -> None:
+        from agentpulse.graph.loop import _trim_history, MAX_LLM_MESSAGES
+
+        msgs = [HumanMessage(content=f"q{i}") for i in range(40)]
+        out = _trim_history(msgs)
+        assert len(out) == MAX_LLM_MESSAGES
+        # oldest turns dropped, newest kept
+        assert out[0].content == f"q{40 - MAX_LLM_MESSAGES}"
+        assert out[-1].content == "q39"
+
+    def test_cut_never_lands_on_tool_message(self) -> None:
+        """If the cut point falls on a ToolMessage, extend back to its paired
+        assistant message so the trimmed history is OpenAI-compatible."""
+        from agentpulse.graph.loop import _trim_history
+
+        # 30 turns of: user -> assistant(tool_call) -> tool(result)
+        msgs: list[Any] = []
+        for i in range(30):
+            msgs.append(HumanMessage(content=f"q{i}"))
+            msgs.append(AIMessage(content="", tool_calls=[{"name": "add", "args": {"a": 1, "b": 2}, "id": f"c{i}"}]))
+            msgs.append(ToolMessage(content="3", tool_call_id=f"c{i}"))
+        out = _trim_history(msgs)
+        # starts on a complete turn, never on a dangling ToolMessage
+        assert not isinstance(out[0], ToolMessage)
+        # every ToolMessage in the trimmed history has its paired assistant turn
+        assistant_ids = {
+            tc["id"]
+            for m in out
+            if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)
+            for tc in m.tool_calls
+        }
+        for m in out:
+            if isinstance(m, ToolMessage):
+                assert m.tool_call_id in assistant_ids

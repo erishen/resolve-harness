@@ -22,32 +22,60 @@ the SSE handler drains; a None sentinel closes the stream.
 from __future__ import annotations
 
 import datetime
+import json
 import queue
+import sqlite3
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any, Callable
 
 from .graph.loop import build_loop
-from .harness import Harness
-from .llm import LiteLLMRouter
+from .harness import Harness, memory_hint
+from .llm import LiteLLMRouter, usage_diff, usage_snapshot
 from .roles import Evaluator, Planner, _lang_name
+from .tools.fs import make_fs_tools
+from .tools.registry import ToolRegistry
 
 MAX_REPLAN_ROUNDS = 1  # hard ceiling on plan-revision rounds (anti-runaway)
+
+# How many successful tasks the persisted history keeps (oldest dropped).
+HISTORY_KEEP = 500
+
+
+def default_history_path() -> Path:
+    """Persisted task log: <project root>/data/task_history.db (SQLite)."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "pyproject.toml").exists():
+            return parent / "data" / "task_history.db"
+    return Path.cwd() / "data" / "task_history.db"
+
+
+def default_sandbox_dir() -> Path:
+    """Global sandbox root: <project root>/data/sandbox."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "pyproject.toml").exists():
+            return parent / "data" / "sandbox"
+    return Path.cwd() / "data" / "sandbox"
 
 SPECIALIST_PROMPT = """You are a SPECIALIST executor in a multi-agent task system. Complete your assigned subtask, then report what you did.
 
 Subtask: {title}
 Instruction: {instruction}
 
-Results of earlier subtasks (context):
+Context:
 {context}
 
 Rules:
-1. Batch independent tool calls into ONE message: if you need several values at once, call the tool multiple times in a single reply (e.g. call add twice in one message for two sums).
-2. TRUST tool results. Never recompute what a tool already returned, and never redo work that is already in the context above — use it directly.
-3. Prefer the minimum number of tool calls that fully answers the subtask. One batch, then summarize.
-4. Use tools when they help: write_file/read_file for artifacts, remember/recall for facts, add/get_current_time for computation and time.
-5. When done, end with a concise summary, and put every key computed value on its own line, e.g. "结果: 68".
+1. THIS SUBTASK RUNS IN ITS OWN ISOLATED SANDBOX, IN PARALLEL WITH OTHERS. Never read or assume files written by other subtasks — they are not visible to you. Get any data you need yourself (fetch/compute/write) inside this subtask.
+2. Batch independent tool calls into ONE message: if you need several values at once, call the tool multiple times in a single reply.
+3. TRUST tool results. Never recompute what a tool already returned.
+4. Prefer the minimum number of tool calls that fully answers the subtask. One batch, then summarize.
+5. Use tools when they help: write_file/read_file for artifacts (ALWAYS relative sandbox paths — never /tmp, /app or any absolute path), get_current_time for time. Arithmetic has no tool — pure math is resolved by code; compute simple values yourself. You may `recall` an existing long-term fact if needed, but NEVER write to long-term memory (no remember) — task data lives only in the sandbox files you create.
+6. When done, end with a concise summary, and put every key computed value on its own line, e.g. "结果: 68".
 
 Language: write your thinking and your final summary in {language} — never in English.
 
@@ -105,6 +133,8 @@ class TaskRunner:
         max_replan_rounds: int = MAX_REPLAN_ROUNDS,
         plugin_dir: str | None = None,
         codegen: bool = True,
+        parallel: int = 4,
+        history_path: str | Path | None = None,
     ) -> None:
         self.harness = harness
         self.router: LiteLLMRouter = harness.router
@@ -113,10 +143,104 @@ class TaskRunner:
         self.max_replan_rounds = max_replan_rounds
         self.plugin_dir = plugin_dir  # None -> data/fastpath_plugins
         self.codegen = codegen  # allow tests to pin the codegen step off
+        # parallel>1 runs the plan's subtasks concurrently (fan-out). The
+        # router / memory / registry are thread-safe; results are collected
+        # by index so the reporter still sees a stable order.
+        self.parallel = max(1, parallel)
+        # Successful tasks are persisted (full event stream) to a SQLite DB so
+        # the operation log survives restarts; None -> data/task_history.db.
+        # Same pattern as LongTermMemory: stdlib sqlite3 + lock, thread-safe.
+        self.history_path = str(history_path) if history_path else str(default_history_path())
+        self._conn: sqlite3.Connection | None = None
+        self._db_lock = threading.RLock()
+        self._history: dict[str, dict[str, Any]] = self._load_history()
         self._planner = Planner(self.router, language=language)
         self._evaluator = Evaluator(self.router, language=language)
         self._records: dict[str, TaskRecord] = {}
         self._lock = threading.Lock()
+
+    # -- history (persisted task log, SQLite) --------------------------------------
+
+    def _db(self) -> sqlite3.Connection:
+        """Lazily open the history DB and ensure the schema exists."""
+        if self._conn is None:
+            path = Path(self.history_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(str(path), check_same_thread=False)
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS task_history (
+                    task_id    TEXT PRIMARY KEY,
+                    objective TEXT NOT NULL,
+                    model     TEXT NOT NULL,
+                    status    TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    error     TEXT,
+                    events    TEXT NOT NULL
+                )
+                """
+            )
+            self._conn.commit()
+        return self._conn
+
+    def _load_history(self) -> dict[str, dict[str, Any]]:
+        """Load previously persisted successful tasks into memory (newest last
+        in the dict is irrelevant — list() sorts by created_at)."""
+        out: dict[str, dict[str, Any]] = {}
+        try:
+            with self._db_lock:
+                rows = self._db().execute(
+                    "SELECT task_id, objective, model, status, created_at, error, events"
+                    " FROM task_history"
+                ).fetchall()
+            for task_id, objective, model, status, created_at, error, events in rows:
+                try:
+                    evts = json.loads(events) if events else []
+                except json.JSONDecodeError:
+                    evts = []
+                out[task_id] = {
+                    "task_id": task_id,
+                    "objective": objective,
+                    "model": model,
+                    "status": status,
+                    "created_at": created_at,
+                    "error": error,
+                    "events": evts,
+                }
+        except sqlite3.Error:
+            pass
+        return out
+
+    def _persist_task(self, record: TaskRecord) -> None:
+        """Upsert a successful task's full event log; bound the table size."""
+        try:
+            snap = record.snapshot()
+            with self._db_lock:
+                conn = self._db()
+                conn.execute(
+                    "INSERT OR REPLACE INTO task_history"
+                    " (task_id, objective, model, status, created_at, error, events)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        snap["task_id"],
+                        snap["objective"],
+                        snap["model"],
+                        snap["status"],
+                        snap["created_at"],
+                        snap["error"],
+                        json.dumps(snap["events"], ensure_ascii=False),
+                    ),
+                )
+                conn.execute(
+                    "DELETE FROM task_history WHERE task_id IN ("
+                    " SELECT task_id FROM task_history"
+                    " ORDER BY created_at DESC LIMIT -1 OFFSET ?)",
+                    (HISTORY_KEEP,),
+                )
+                conn.commit()
+            self._history[record.task_id] = snap
+        except sqlite3.Error:
+            pass  # persistence is best-effort; the in-memory record still works
 
     # -- public API -----------------------------------------------------------
 
@@ -131,12 +255,20 @@ class TaskRunner:
 
     def get(self, task_id: str) -> dict[str, Any] | None:
         record = self._records.get(task_id)
-        return record.snapshot() if record else None
+        if record:
+            return record.snapshot()
+        return self._history.get(task_id)
 
     def list(self) -> list[dict[str, Any]]:
         with self._lock:
             records = list(self._records.values())
-        return [r.snapshot() for r in records]
+        snaps = [r.snapshot() for r in records]
+        for hid, hsnap in self._history.items():
+            if hid not in self._records:
+                snaps.append(hsnap)
+        # newest first (in-memory and persisted logs share one timeline)
+        snaps.sort(key=lambda s: s.get("created_at", ""), reverse=True)
+        return snaps
 
     def subscribe(self, task_id: str) -> queue.Queue | None:
         record = self._records.get(task_id)
@@ -169,6 +301,8 @@ class TaskRunner:
         try:
             self._emit(record, "task_start", {"objective": record.objective, "model": record.model})
             objective = record.objective
+            # token accounting for THIS task (planner + specialists + evaluator + reporter)
+            usage_baseline = usage_snapshot(self.router)
 
             # Fast path: deterministic queries (arithmetic / time / conversions…)
             # are resolved by code — no Planner/Specialist/Evaluator LLM at all.
@@ -180,7 +314,14 @@ class TaskRunner:
                 plugin_dir=self.plugin_dir,
             )
             if fast is not None:
-                self._emit_fast_result(record, objective, fast.method, fast.answer, fast.detail)
+                self._emit_fast_result(
+                    record,
+                    objective,
+                    fast.method,
+                    fast.answer,
+                    fast.detail,
+                    usage=usage_diff(self.router, usage_baseline),
+                )
                 return
 
             # Codegen: ask the LLM once whether this can be solved by a generated
@@ -190,14 +331,24 @@ class TaskRunner:
 
                 gen_answer = codegen_solve(self.router, objective, plugin_dir=self.plugin_dir)
                 if gen_answer is not None:
-                    self._emit_fast_result(record, objective, "codegen", gen_answer, gen_answer[:200])
+                    self._emit_fast_result(
+                        record,
+                        objective,
+                        "codegen",
+                        gen_answer,
+                        gen_answer[:200],
+                        usage=usage_diff(self.router, usage_baseline),
+                    )
                     return
+
+            # One isolated sandbox + tool registry per task (parallel-safe).
+            task_sandbox, task_registry = self._make_task_workspace(task_id)
 
             for round_no in range(self.max_replan_rounds + 1):
                 plan = self._planner.plan(objective)
                 self._emit(record, "plan", {"objective": objective, "subtasks": plan, "round": round_no})
 
-                results = self._execute_plan(record, plan)
+                results = self._execute_plan(record, plan, registry=task_registry)
 
                 verdict = self._evaluator.evaluate(
                     objective,
@@ -217,9 +368,13 @@ class TaskRunner:
                             "passed": bool(verdict["passed"]),
                             "score": int(verdict.get("score", 0)),
                             "rounds": round_no + 1,
+                            "usage": usage_diff(self.router, usage_baseline),
                         },
                     )
                     record.status = "done"
+                    # Successful task: persist every step so the operation log
+                    # survives a restart (best-effort; never raises).
+                    self._persist_task(record)
                     return
 
                 # not passed and rounds remain -> re-plan with feedback
@@ -231,34 +386,124 @@ class TaskRunner:
         except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
             record.error = str(exc)
             record.status = "error"
-            self._emit(record, "error", {"message": str(exc)})
+            self._emit(
+                record,
+                "error",
+                {"message": str(exc), "usage": usage_diff(self.router, usage_baseline)},
+            )
         finally:
             record.queue.put(None)
 
+    # -- per-task isolated workspace ----------------------------------------------
+
+    def _make_task_workspace(self, task_id: str) -> tuple[Path, ToolRegistry]:
+        """Give every task its own sandbox directory + registry so parallel
+        subtasks never see each other's (or older tasks') files.
+
+        The fs tools are rebuilt bound to `<global_sandbox>/tasks/<task_id>/`;
+        every other tool (fetch / get_current_time…) is copied as-is from the
+        harness registry (memory tools excluded on purpose).
+        """
+        base = Path(self.harness.sandbox_dir) if self.harness.sandbox_dir else default_sandbox_dir()
+        task_dir = base / "tasks" / task_id
+        registry = ToolRegistry()
+        for tool in self.harness.tools:
+            if tool.name in {"read_file", "write_file", "list_files"}:
+                continue  # rebuilt below with the per-task sandbox
+            if tool.name in {"remember", "list_memories"}:
+                # Tasks never WRITE long-term memory (specialists storing
+                # intermediate artifacts pollutes cross-session facts). recall
+                # is allowed: a specialist may read an existing snapshot.
+                continue
+            registry.register(
+                tool.func,
+                name=tool.name,
+                description=tool.description,
+                parameters=tool.parameters,
+                require_approval=tool.require_approval,
+            )
+        for fn in make_fs_tools(task_dir):
+            registry.register(fn)
+        return task_dir, registry
+
     # -- specialists ------------------------------------------------------------------
 
-    def _execute_plan(self, record: TaskRecord, plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        results: list[dict[str, Any]] = []
+    def _execute_plan(
+        self,
+        record: TaskRecord,
+        plan: list[dict[str, Any]],
+        registry: ToolRegistry,
+    ) -> list[dict[str, Any]]:
+        total = len(plan)
+        # Announce every subtask up front: with parallel workers the UI shows
+        # the whole batch as running cards at once instead of one-by-one.
         for i, st in enumerate(plan):
             self._emit(
                 record,
                 "subtask_start",
-                {"index": i, "title": st["title"], "total": len(plan)},
+                {"index": i, "title": st["title"], "total": total},
             )
-            context = _format_context(results)
+
+        # Serial mode keeps the "earlier results as context" semantics; the
+        # lock guards the shared list between the main thread and workers.
+        done: list[dict[str, Any]] = []
+        done_lock = threading.Lock()
+
+        def run_one(i: int, st: dict[str, Any]) -> dict[str, Any]:
+            # Subtask-level Fast Path: a deterministic instruction ("计算 2+3",
+            # "现在几点"…) is resolved by code with ZERO model calls. The
+            # specialist loop is skipped entirely.
+            from .fastpath import try_fast_answer
+
+            fast = try_fast_answer(
+                st["instruction"],
+                sandbox_dir=self.harness.sandbox_dir,
+                plugin_dir=self.plugin_dir,
+            )
+            if fast is not None:
+                def emit_fast(kind: str, data: dict[str, Any]) -> None:
+                    self._emit(record, kind, {**data, "subtask": i})
+
+                emit_fast("tool_call", {"name": fast.method, "args": {}})
+                emit_fast("tool_result", {"name": fast.method, "content": fast.detail})
+                summary = fast.answer
+                result = {"index": i, "title": st["title"], "summary": summary}
+                if self.parallel <= 1:
+                    with done_lock:
+                        done.append(result)
+                self._emit(
+                    record,
+                    "subtask_done",
+                    {"index": i, "title": st["title"], "summary": summary, "fast": True},
+                )
+                return result
+
+            if self.parallel > 1:
+                # Parallel mode: there is no "earlier result" — every worker
+                # starts at once, so give each one the full plan picture.
+                context = _parallel_context(plan)
+            else:
+                with done_lock:
+                    context = _format_context(list(done))
             system_prompt = SPECIALIST_PROMPT.format(
                 title=st["title"],
                 instruction=st["instruction"],
                 context=context,
                 language=_lang_name(self.language),
             )
+            # Memory pre-fetch: relevant long-term snapshots (e.g. a stored
+            # quote) are injected so the specialist can use them instead of
+            # re-fetching. Read-only — task mode still can't write memory.
+            hint = memory_hint(self.harness.long_term, self.harness.memory_scope, st["instruction"])
+            if hint:
+                system_prompt = f"{system_prompt}\n\n{hint}"
 
             def emit_for_subtask(kind: str, data: dict[str, Any], _idx: int = i) -> None:
                 self._emit(record, kind, {**data, "subtask": _idx})
 
             loop = build_loop(
                 self.router,
-                self.harness.tools,
+                registry,
                 system_prompt=system_prompt,
                 verbose=self.harness.settings.verbose,
                 emit=emit_for_subtask,
@@ -271,9 +516,30 @@ class TaskRunner:
                 }
             )
             summary = self._final_reply(final.get("messages", [])) or "(no summary)"
-            results.append({"index": i, "title": st["title"], "summary": summary})
+            result = {"index": i, "title": st["title"], "summary": summary}
+            if self.parallel <= 1:
+                with done_lock:
+                    done.append(result)
             self._emit(record, "subtask_done", {"index": i, "title": st["title"], "summary": summary})
-        return results
+            return result
+
+        if self.parallel > 1 and total > 1:
+            with ThreadPoolExecutor(max_workers=min(self.parallel, total)) as pool:
+                futures = [pool.submit(run_one, i, st) for i, st in enumerate(plan)]
+                results: list[dict[str, Any]] = []
+                for fut in as_completed(futures):
+                    try:
+                        results.append(fut.result())
+                    except Exception:
+                        # One failing subtask fails the task (same as serial);
+                        # cancel what hasn't started yet, then re-raise.
+                        for other in futures:
+                            other.cancel()
+                        raise
+            results.sort(key=lambda r: r["index"])
+            return results
+
+        return [run_one(i, st) for i, st in enumerate(plan)]
 
     def _emit_fast_result(
         self,
@@ -282,6 +548,7 @@ class TaskRunner:
         method: str,
         answer: str,
         detail: str,
+        usage: dict[str, int] | None = None,
     ) -> None:
         """Emit a complete task tree for a code-resolved answer (no LLM loop)."""
         label = {
@@ -309,8 +576,13 @@ class TaskRunner:
             "evaluation",
             {"passed": True, "score": 100, "feedback": "由代码直接完成，零模型调用", "missing": []},
         )
-        self._emit(record, "task_end", {"reply": answer, "passed": True, "score": 100, "rounds": 1})
+        self._emit(
+            record,
+            "task_end",
+            {"reply": answer, "passed": True, "score": 100, "rounds": 1, "usage": usage},
+        )
         record.status = "done"
+        self._persist_task(record)
 
     def _compose_deliverable(
         self,
@@ -355,6 +627,13 @@ def _format_context(results: list[dict[str, Any]]) -> str:
     if not results:
         return "(none — this is the first subtask)"
     return "\n".join(f"[{r['index']}] {r['title']}: {r.get('summary', '')[:1000]}" for r in results)
+
+
+def _parallel_context(plan: list[dict[str, Any]]) -> str:
+    """Parallel-mode context: no earlier results exist, but every worker gets
+    the full plan so it understands where its subtask fits."""
+    titles = "、".join(f"[{s['index']}] {s['title']}" for s in plan)
+    return f"（并行执行，无前序结果；本任务共 {len(plan)} 个子任务：{titles}）"
 
 
 def _replan_objective(

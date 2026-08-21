@@ -30,14 +30,14 @@ def make_fs_tools(sandbox_dir: str | Path) -> list:
     sandbox.mkdir(parents=True, exist_ok=True)
 
     def write_file(path: str, content: str) -> str:
-        """Write text content to a file inside the sandbox (creates dirs)."""
+        """在沙箱内写入文本文件（自动创建目录）。"""
         target = _resolve(sandbox, path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         return f"已写入 {target.relative_to(sandbox)}（{len(content)} 字符）"
 
     def read_file(path: str) -> str:
-        """Read a text file from inside the sandbox."""
+        """读取沙箱内的文本文件。"""
         target = _resolve(sandbox, path)
         if not target.is_file():
             raise FileNotFoundError(f"沙箱中不存在该文件: {path!r}")
@@ -45,7 +45,7 @@ def make_fs_tools(sandbox_dir: str | Path) -> list:
         return f"--- {target.relative_to(sandbox)}（{len(text)} 字符）---\n{text}"
 
     def list_files() -> str:
-        """List all files currently in the sandbox (relative paths)."""
+        """列出沙箱内所有文件（相对路径）。"""
         paths = sorted(
             p.relative_to(sandbox).as_posix()
             for p in sandbox.rglob("*")

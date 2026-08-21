@@ -65,7 +65,16 @@ PLANNER_PROMPT = """You are the PLANNER of a multi-agent task system. You never 
 
 Objective: {objective}
 
-Break it into 2-5 concrete, sequential subtasks. Every subtask instruction MUST be self-contained: the executor only sees your instruction plus the summaries of earlier subtasks, so spell out exactly what to produce and how.
+Break it into 2-5 concrete subtasks. IMPORTANT: every subtask is executed CONCURRENTLY in its own isolated sandbox directory, so each one MUST be fully self-contained:
+
+- A subtask can NEVER depend on files or results produced by another subtask — they run in parallel and cannot see each other's files.
+- Any data a subtask needs (a web fetch, a computation, a file it must create) must be obtained INSIDE that subtask itself.
+- If a step truly depends on an earlier one, merge them into ONE subtask rather than chaining.
+- Spell out exactly what to produce and how; the executor only sees your instruction.
+
+Constraints:
+- File I/O only happens inside the task's sandbox. Use RELATIVE paths only (e.g. `jobs_raw.json` or `notes/plan.md`). Absolute paths like /tmp, /app, /root, /home are rejected by the executor — they must never appear in instructions or artifacts.
+- Each subtask's expected artifacts should be files it creates itself.
 
 Language: write every `title`, `instruction` and `artifacts` in {language} — never in English.
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import queue
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,6 +19,17 @@ from fastapi.testclient import TestClient
 from agentpulse.api import create_app
 from agentpulse.harness import Harness
 from agentpulse.tasks import TaskRunner
+
+# TaskRunner persists successful tasks to a history file; the shared test path
+# must start empty for every test so history never leaks across tests.
+_SHARED_HISTORY = Path("/tmp/agentpulse-task-hist-test.db")
+
+
+@pytest.fixture(autouse=True)
+def _clean_shared_history() -> None:
+    _SHARED_HISTORY.unlink(missing_ok=True)
+    yield
+    _SHARED_HISTORY.unlink(missing_ok=True)
 
 
 class FakeRouter:
@@ -112,7 +124,9 @@ class TestOrchestration:
     def test_full_flow_two_subtasks(self) -> None:
         """Planner -> specialist0(tool loop) -> specialist1 -> evaluator(pass) -> reporter."""
         script = [
-            plan_json(("计算", "用 add 计算 2+3"), ("写文件", "把结果写入 sandbox 的 result.txt")),
+            # note: instruction must NOT be a pure arithmetic expression, or the
+            # subtask Fast Path would short-circuit it and consume no script
+            plan_json(("计算", "完成一个算术计算任务并报告结果"), ("写文件", "把结果写入 sandbox 的 result.txt")),
             tool_call("add", {"a": 2, "b": 3}),
             answer("计算结果为 5"),
             tool_call("write_file", {"path": "result.txt", "content": "5"}),
@@ -121,7 +135,7 @@ class TestOrchestration:
             answer("# 交付\n任务完成"),
         ]
         h = make_harness(script)
-        runner = TaskRunner(h, codegen=False)
+        runner = TaskRunner(h, parallel=1, history_path="/tmp/agentpulse-task-hist-test.db", codegen=False)
         task_id = runner.start("完成一个计算并保存")
         events = drain(task_id, runner)
         types = types_of(events)
@@ -156,7 +170,7 @@ class TestOrchestration:
             answer("# 最终报告\n含结论"),
         ]
         h = make_harness(script)
-        runner = TaskRunner(h, max_replan_rounds=2, codegen=False)
+        runner = TaskRunner(h, parallel=1, history_path="/tmp/agentpulse-task-hist-test.db", max_replan_rounds=2, codegen=False)
         task_id = runner.start("写一份带结论的报告")
         events = drain(task_id, runner)
         types = types_of(events)
@@ -181,7 +195,7 @@ class TestOrchestration:
             answer("# ok"),
         ]
         h = make_harness(script)
-        runner = TaskRunner(h, codegen=False)
+        runner = TaskRunner(h, parallel=1, history_path="/tmp/agentpulse-task-hist-test.db", codegen=False)
         task_id = runner.start("写一个文件")
         events = drain(task_id, runner)
         results = [e["data"]["content"] for e in events if e["type"] == "tool_result"]
@@ -198,7 +212,7 @@ class TestOrchestration:
             answer("# deliverable"),
         ]
         h = make_harness(script)
-        runner = TaskRunner(h, codegen=False)
+        runner = TaskRunner(h, parallel=1, history_path="/tmp/agentpulse-task-hist-test.db", codegen=False)
         task_id = runner.start("简单任务")
         drain(task_id, runner)
         events = drain(task_id, runner)  # subscribe after finish
@@ -209,7 +223,7 @@ class TestOrchestration:
         """Deterministic objective short-circuits: the FakeRouter is never
         called — pure code answers "计算 2+3" in milliseconds."""
         h = make_harness([])  # empty script: any LLM call would yield an error event
-        runner = TaskRunner(h, codegen=False)
+        runner = TaskRunner(h, parallel=1, history_path="/tmp/agentpulse-task-hist-test.db", codegen=False)
         task_id = runner.start("计算 2+3")
         events = drain(task_id, runner)
         types = types_of(events)
@@ -231,7 +245,7 @@ class TestOrchestration:
 
         h = make_harness([])
         h.router = BoomRouter([])
-        runner = TaskRunner(h, max_steps=3, codegen=False)
+        runner = TaskRunner(h, parallel=1, history_path="/tmp/agentpulse-task-hist-test.db", max_steps=3, codegen=False)
         task_id = runner.start("会失败的任务")
         events = drain(task_id, runner)
         assert events[-1]["type"] == "error"
@@ -249,7 +263,7 @@ class TestTaskApi:
             answer("# 交付"),
         ]
         h = make_harness(script)
-        return TestClient(create_app(harness=h, runner=TaskRunner(h, max_steps=4, codegen=False)))
+        return TestClient(create_app(harness=h, runner=TaskRunner(h, parallel=1, history_path="/tmp/agentpulse-task-hist-test.db", max_steps=4, codegen=False)))
 
     def test_create_and_snapshot(self) -> None:
         client = self._client()
@@ -280,3 +294,243 @@ class TestTaskApi:
         assert types[0] == "task_start"
         assert "plan" in types and "subtask_start" in types and "evaluation" in types
         assert types[-1] == "task_end"
+
+
+class TestParallelTasks:
+    """Subtask fan-out: with parallel>1 the batch is announced up front and
+    workers execute concurrently; results come back ordered by index."""
+
+    def test_parallel_batch_announced_then_completed(self) -> None:
+        script = [
+            plan_json(("A", "生成报告 A"), ("B", "生成报告 B")),
+            answer("结果: 报告 A"),
+            answer("结果: 报告 B"),
+            verdict_json(True, 92),
+            answer("# 交付\n两份报告完成"),
+        ]
+        h = make_harness(script)
+        runner = TaskRunner(h, parallel=2, history_path="/tmp/agentpulse-task-hist-test.db", codegen=False)
+        task_id = runner.start("生成两份报告")
+        events = drain(task_id, runner)
+        types = types_of(events)
+
+        assert types[-1] == "task_end"
+        starts = [i for i, t in enumerate(types) if t == "subtask_start"]
+        dones = [i for i, t in enumerate(types) if t == "subtask_done"]
+        assert len(starts) == 2 and len(dones) == 2
+        # fan-out: every subtask_start is announced before any subtask_done
+        assert max(starts) < min(dones)
+        # both workers completed and tagged their events with the right index
+        done_subtasks = {e["data"]["index"] for e in events if e["type"] == "subtask_done"}
+        assert done_subtasks == {0, 1}
+        end = events[-1]
+        assert end["data"]["passed"] is True
+        assert runner.get(task_id)["status"] == "done"
+
+    def test_parallel_single_subtask_falls_back_to_serial(self) -> None:
+        """One subtask: no pool needed; still completes normally."""
+        script = [
+            plan_json(("A", "做一件事")),
+            answer("完成"),
+            verdict_json(True, 90),
+            answer("# 交付\n完成"),
+        ]
+        h = make_harness(script)
+        runner = TaskRunner(h, parallel=2, history_path="/tmp/agentpulse-task-hist-test.db", codegen=False)
+        task_id = runner.start("做一件事")
+        events = drain(task_id, runner)
+        assert types_of(events)[-1] == "task_end"
+
+
+class TestHistoryPersistence:
+    """Successful tasks persist their full event log; a fresh runner (restart)
+    can list/read them back. Failed tasks are not persisted."""
+
+    def test_successful_task_persisted_and_reloadable(self, tmp_path) -> None:
+        hist = tmp_path / "hist.db"
+        script = [
+            plan_json(("A", "做一件事")),
+            answer("完成"),
+            verdict_json(True, 90),
+            answer("# 交付\n完成"),
+        ]
+        h = make_harness(script)
+        runner = TaskRunner(h, parallel=1, codegen=False, history_path=str(hist))
+        task_id = runner.start("做一件事")
+        events = drain(task_id, runner)
+        assert types_of(events)[-1] == "task_end"
+
+        # the SQLite DB now holds the full event stream, every step
+        assert hist.exists()
+        import sqlite3 as _sqlite3
+
+        conn = _sqlite3.connect(str(hist))
+        row = conn.execute(
+            "SELECT status, events FROM task_history WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        conn.close()
+        assert row is not None and row[0] == "done"
+        assert json.loads(row[1]) == events
+
+        # a brand-new runner (simulating a restart) can read it back
+        h2 = make_harness([])
+        runner2 = TaskRunner(h2, parallel=1, codegen=False, history_path=str(hist))
+        got = runner2.get(task_id)
+        assert got is not None and got["status"] == "done"
+        assert got["events"] == events
+        assert task_id in {t["task_id"] for t in runner2.list()}
+
+    def test_failed_task_not_persisted(self, tmp_path) -> None:
+        hist = tmp_path / "hist.db"
+        h = make_harness([])  # empty script: planner gets "(out of script)" -> error
+        runner = TaskRunner(h, parallel=1, codegen=False, history_path=str(hist))
+        task_id = runner.start("会失败的任务")
+        events = drain(task_id, runner)
+        assert types_of(events)[-1] == "error"
+        # a fresh runner must not see the failed task
+        h2 = make_harness([])
+        runner2 = TaskRunner(h2, parallel=1, codegen=False, history_path=str(hist))
+        assert runner2.get(task_id) is None
+
+
+class TestTaskSandboxIsolation:
+    """Each task runs in its own sandbox dir (<global>/tasks/<task_id>), so
+    parallel subtasks / successive tasks never see each other's files."""
+
+    def test_each_task_gets_isolated_directory(self, tmp_path) -> None:
+        sb = tmp_path / "sb"
+        script = [
+            plan_json(("写文件", "写 result.txt 内容为 hello")),
+            tool_call("write_file", {"path": "result.txt", "content": "hello"}),
+            answer("已写入 result.txt"),
+            verdict_json(True, 95),
+            answer("# 交付\n完成"),
+        ]
+        h = Harness(memory_db=":memory:", max_steps=6, sandbox_dir=str(sb))
+        h.router = FakeRouter(list(script))
+
+        runner = TaskRunner(h, parallel=1, codegen=False, history_path=str(tmp_path / "h1.db"))
+        tid1 = runner.start("任务一")
+        events = drain(tid1, runner)
+        assert types_of(events)[-1] == "task_end"
+
+        # task 1's file lives under tasks/<tid1>/ and nowhere else at root
+        assert (sb / "tasks" / tid1 / "result.txt").read_text(encoding="utf-8") == "hello"
+        assert not (sb / "result.txt").exists()
+
+        # a second task with the same relative path is fully isolated
+        h.router = FakeRouter(list(script))
+        runner2 = TaskRunner(h, parallel=1, codegen=False, history_path=str(tmp_path / "h2.db"))
+        tid2 = runner2.start("任务二")
+        events = drain(tid2, runner2)
+        assert types_of(events)[-1] == "task_end"
+
+        assert (sb / "tasks" / tid2 / "result.txt").read_text(encoding="utf-8") == "hello"
+        # both survive independently — no overwrite across tasks
+        assert (sb / "tasks" / tid1 / "result.txt").read_text(encoding="utf-8") == "hello"
+
+    def test_specialist_registry_has_no_global_fs_tools(self, tmp_path) -> None:
+        """The per-task registry replaces read/write/list with task-bound ones;
+        verify the workspace registry binds the right directory."""
+        sb = tmp_path / "sb"
+        h = Harness(memory_db=":memory:", max_steps=6, sandbox_dir=str(sb))
+        h.router = FakeRouter([])
+        runner = TaskRunner(h, parallel=1, codegen=False, history_path=str(tmp_path / "h.db"))
+        task_dir, registry = runner._make_task_workspace("abc123")
+        assert task_dir == sb / "tasks" / "abc123"
+        names = registry.names()
+        assert {"read_file", "write_file", "list_files"} <= set(names)
+        assert "fetch" in names and "get_current_time" in names
+        # tasks may READ memory (recall) but never WRITE (remember) or list
+        assert "recall" in names
+        assert not {"remember", "list_memories"} & set(names)
+        # writes go into the per-task dir
+        registry.execute("write_file", {"path": "x.txt", "content": "hi"})
+        assert (sb / "tasks" / "abc123" / "x.txt").read_text(encoding="utf-8") == "hi"
+        assert not (sb / "x.txt").exists()
+
+
+class UsageRouter(FakeRouter):
+    """FakeRouter that also accumulates usage like LiteLLMRouter."""
+
+    def __init__(self, script):
+        super().__init__(script)
+        self.total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    def complete(self, messages, tools=None, **kwargs):
+        resp = super().complete(messages, tools=tools, **kwargs)
+        self.total_usage["prompt_tokens"] += 10
+        self.total_usage["completion_tokens"] += 20
+        self.total_usage["total_tokens"] += 30
+        return resp
+
+
+class TestUsageTracking:
+    def test_task_end_carries_token_usage(self, tmp_path) -> None:
+        script = [
+            plan_json(("A", "做一件事")),
+            answer("完成"),
+            verdict_json(True, 90),
+            answer("# 交付\n完成"),
+        ]
+        h = Harness(memory_db=":memory:", max_steps=6, sandbox_dir=str(tmp_path / "sb"))
+        h.router = UsageRouter(list(script))
+        runner = TaskRunner(h, parallel=1, codegen=False, history_path=str(tmp_path / "h.db"))
+        task_id = runner.start("做一件事")
+        events = drain(task_id, runner)
+
+        end = next(e for e in events if e["type"] == "task_end")
+        usage = end["data"]["usage"]
+        # planner(1) + specialist(1) + evaluator(1) + reporter(1) = 4 calls
+        assert usage == {"prompt_tokens": 40, "completion_tokens": 80, "total_tokens": 120}
+
+    def test_fast_result_without_llm_has_zero_usage(self, tmp_path) -> None:
+        """Fast path resolves without any LLM call -> usage diff is 0/absent-safe."""
+        h = Harness(memory_db=":memory:", max_steps=6, sandbox_dir=str(tmp_path / "sb"))
+        h.router = UsageRouter([])
+        runner = TaskRunner(h, parallel=1, codegen=False, history_path=str(tmp_path / "h.db"))
+        task_id = runner.start("计算 2+3")  # fast path: 2+3 resolves by code
+        events = drain(task_id, runner)
+        assert types_of(events)[-1] == "task_end"
+        end = next(e for e in events if e["type"] == "task_end")
+        assert end["data"]["usage"] == {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+
+
+class TestSubtasksFastPath:
+    """A deterministic subtask instruction ("计算 2+3") resolves by code with
+    ZERO model calls — the specialist loop is skipped entirely."""
+
+    def test_deterministic_subtask_uses_no_llm(self, tmp_path) -> None:
+        script = [
+            plan_json(("计算", "计算 2+3"), ("报告", "写一句话报告")),
+            answer("完成报告"),
+            verdict_json(True, 90),
+            answer("# 交付\n完成"),
+        ]
+        h = Harness(memory_db=":memory:", max_steps=6, sandbox_dir=str(tmp_path / "sb"))
+        h.router = UsageRouter(list(script))
+        runner = TaskRunner(h, parallel=1, codegen=False, history_path=str(tmp_path / "h.db"))
+        task_id = runner.start("做两件事")
+        events = drain(task_id, runner)
+
+        # LLM calls: planner(1) + specialist(normal)(1) + evaluator(1) + reporter(1)
+        # — the arithmetic subtask consumed none
+        end = next(e for e in events if e["type"] == "task_end")
+        assert end["data"]["usage"] == {
+            "prompt_tokens": 40,
+            "completion_tokens": 80,
+            "total_tokens": 120,
+        }
+        # the arithmetic subtask finished via fast path, flagged in the event
+        dones = [e["data"] for e in events if e["type"] == "subtask_done"]
+        fast = next(d for d in dones if d.get("fast"))
+        assert "计算" in fast["title"]
+        assert "5" in fast["summary"] or "2+3" in fast["summary"]
+        # non-fast subtask has no flag
+        normal = next(d for d in dones if not d.get("fast"))
+        assert "报告" in normal["title"]
+        assert types_of(events)[-1] == "task_end"

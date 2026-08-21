@@ -5,6 +5,11 @@ code) and is shown as the example grid in the task workbench. Because the
 workbench drives a live agent, the user can also ask the model to *regenerate*
 a fresh batch of example tasks — generic and varied, **not** derived from any
 saved memory — so the demos keep feeling fresh on each click.
+
+Deletion: any example (built-in or generated) can be deleted from the grid.
+Deletions are persisted as a tombstone list in `data/deleted_examples.json`,
+so deleted examples stay hidden across reloads, and the regeneration prompt
+receives the tombstones as a negative list ("don't generate anything similar").
 """
 
 from __future__ import annotations
@@ -22,6 +27,11 @@ BUILTIN_EXAMPLES: list[dict[str, str]] = [
     {"label": "写文档", "text": "写一份 150 字左右的 RAG 技术简介，保存为沙箱文件 rag-intro.md", "source": "builtin"},
     {"label": "小项目", "text": "创建一个小型 Python 项目：README.md 写项目说明，hello.py 写一个打印问候的脚本", "source": "builtin"},
     {"label": "代码+文档", "text": "写一个 Python 快速排序函数保存为 quicksort.py，并写 100 字使用说明保存为 quicksort-notes.md", "source": "builtin"},
+    {"label": "抓 JD", "text": "用 fetch 工具获取 https://remotive.com/api/remote-jobs?search=python 的 python 岗位 JD 列表，提取前 3 个岗位的标题、公司与工作地点，汇总保存为沙箱文件 python-jobs.md", "source": "builtin"},
+    {"label": "查行情", "text": "用 fetch 工具获取实时行情。目标公司任选一家知名公司（也可用上方公司下拉框选择）：先确定其腾讯行情代号（美股 usXXXX、港股 hk5 位数字、A 股 sh6XXXXX 沪市 / sz0XXXXX 深市，如苹果=usAAPL），fetch https://qt.gtimg.cn/q=<代号> 解析当前价格与涨跌幅，保存为沙箱文件 quote.md", "source": "builtin"},
+    {"label": "查汇率", "text": "用 fetch 工具获取 https://qt.gtimg.cn/q=whUSDCNY 的汇率数据，解析美元兑人民币的当前汇率、涨跌额与涨跌幅，保存为沙箱文件 fx-rate.md", "source": "builtin"},
+    {"label": "查全球指数", "text": "用 fetch 工具获取 https://qt.gtimg.cn/q=usDJI,usIXIC,usINX 的全球指数行情，解析道琼斯、纳斯达克与标普500 的当前点位与涨跌幅，保存为沙箱文件 indices.md", "source": "builtin"},
+    {"label": "查期货", "text": "用 fetch 工具获取 https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=5&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=m:113+t:2&fields=f1,f2,f3,f4,f12,f14 的上期所期货行情，解析前 5 个合约的名称、最新价与涨跌幅，保存为沙箱文件 futures.md", "source": "builtin"},
 ]
 
 # Generic regeneration prompt — deliberately NOT memory-aware. It only asks the
@@ -37,6 +47,8 @@ GENERATE_PROMPT = """你是示例任务生成器。为多 Agent 编排系统（P
 3. 每个任务要有可验证的产出：计算结果 / 保存的文件 / 报告，便于 Evaluator 验收。
 4. label 用 2-6 个字的简短中文标签（如「配色报告」「数据清洗」）；text 是具体可执行的一句话任务描述（20-80 字）。
 5. 避免：开放式写作题、无法验证结果的任务、引用不存在的文件、空泛描述。
+
+{deleted_block}
 
 输出 ONLY JSON 数组：[{{"label": "简短中文标签", "text": "完整任务目标"}}]
 不要解释、不要多余文字。
@@ -54,6 +66,89 @@ _ENGLISH_LABEL_RE = re.compile(r"^[A-Za-z0-9_-]{3,}$")
 
 # module-level cache: regenerated examples are reused until force=True
 _cache: list[dict[str, str]] | None = None
+
+
+# -- deleted-example tombstones ---------------------------------------------------
+#
+# Deleted examples (built-in or generated) are persisted as a tombstone list so
+# they stay hidden across reloads, and regeneration is told to avoid them.
+
+
+def _deleted_file() -> Path:
+    """Tombstone store location: <project root>/data/deleted_examples.json."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "pyproject.toml").exists():
+            return parent / "data" / "deleted_examples.json"
+    return Path.cwd() / "data" / "deleted_examples.json"
+
+
+def _load_deleted() -> list[dict[str, str]]:
+    """Read the tombstone list; corrupt/missing file degrades to empty."""
+    path = _deleted_file()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        items = data.get("deleted") if isinstance(data, dict) else None
+        if isinstance(items, list):
+            return [{"label": str(e.get("label", "")), "text": str(e.get("text", ""))} for e in items]
+    except (OSError, ValueError, AttributeError):
+        pass
+    return []
+
+
+def _save_deleted(items: list[dict[str, str]]) -> None:
+    path = _deleted_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"deleted": items}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _deleted_texts() -> set[str]:
+    return {e["text"] for e in _load_deleted() if e.get("text")}
+
+
+def _deleted_block() -> str:
+    """Negative list for the regeneration prompt: avoid anything similar."""
+    deleted = [e for e in _load_deleted() if e.get("text")]
+    if not deleted:
+        return ""
+    lines = "\n".join(
+        f"- {e.get('label') or '未命名'}：{e['text']}" for e in deleted[-15:]
+    )
+    return (
+        "以下任务已被用户删除，**不要生成与它们类似的任务**"
+        "（避免重复的标签、主题或写法）：\n" + lines
+    )
+
+
+def delete_example(label: str, text: str) -> bool:
+    """Tombstone one example (built-in or generated). Idempotent.
+
+    Returns True when the example was newly recorded, False when it was
+    already deleted. Also invalidates the regeneration cache so a deleted
+    generated example cannot resurface from the cached batch.
+    """
+    text = (text or "").strip()
+    if not text:
+        return False
+    items = _load_deleted()
+    if any(e.get("text") == text for e in items):
+        return False
+    items.append({"label": (label or "").strip()[:80], "text": text[:500]})
+    _save_deleted(items)
+    global _cache
+    _cache = None  # a deleted generated example must not come back from cache
+    return True
+
+
+def _filter_deleted(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Drop any tombstoned example from a result list."""
+    deleted = _deleted_texts()
+    if not deleted:
+        return list(items)
+    return [e for e in items if e.get("text") not in deleted]
 
 
 def _sandbox_file_list(sandbox_dir: str | Path | None) -> str:
@@ -104,25 +199,33 @@ def _extract_json_array(text: str) -> list[dict[str, Any]] | None:
 
 
 def generate_examples() -> list[dict[str, str]]:
-    """Return the fixed built-in example objectives (no LLM, fast path)."""
-    return list(BUILTIN_EXAMPLES)
+    """Return the fixed built-in example objectives (no LLM, fast path).
+
+    Deleted examples (tombstoned via `delete_example`) are excluded.
+    """
+    return _filter_deleted(BUILTIN_EXAMPLES)
 
 
 def generate_fresh_examples(harness: Harness, *, force: bool = False) -> list[dict[str, str]]:
     """Return built-ins plus a fresh batch of generic LLM-generated demo tasks.
 
     The generated tasks are varied and executable (validated against root
-    absolute paths and off-style labels, retried once). They are NOT derived
+    absolute paths, off-style labels, retried once). They are NOT derived
     from the user's long-term memory — just fresh demos on each regeneration.
 
-    Cached in-process; `force=True` regenerates the generated part.
+    Cached in-process; `force=True` regenerates the generated part. Deleted
+    examples are filtered from the result and fed to the model as a negative
+    list so fresh batches avoid anything similar.
     """
     global _cache
     if not force and _cache is not None:
-        return _cache
+        return _filter_deleted(_cache)
 
     generated: list[dict[str, str]] = []
-    prompt = GENERATE_PROMPT.format(sandbox_files=_sandbox_file_list(harness.sandbox_dir))
+    prompt = GENERATE_PROMPT.format(
+        sandbox_files=_sandbox_file_list(harness.sandbox_dir),
+        deleted_block=_deleted_block(),
+    )
     for _ in range(2):  # one retry when the model output is unusable
         try:
             response = harness.router.complete(
@@ -136,6 +239,6 @@ def generate_fresh_examples(harness: Harness, *, force: bool = False) -> list[di
         if generated:
             break
 
-    result = BUILTIN_EXAMPLES + generated
+    result = _filter_deleted(BUILTIN_EXAMPLES + generated)
     _cache = result
     return result

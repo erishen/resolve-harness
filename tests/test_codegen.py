@@ -270,7 +270,7 @@ class TestTaskRunnerIntegration:
 
         h = Harness(memory_db=":memory:", max_steps=6, sandbox_dir=str(tmp_path / "sb"))
         h.router = GenRouter()
-        runner = TaskRunner(h, plugin_dir=str(plugin_dir))
+        runner = TaskRunner(h, plugin_dir=str(plugin_dir), history_path=str(tmp_path / "hist.jsonl"))
 
         # first run: codegen generates + persists
         events = drain(runner.start("计算 7 的平方"), runner)
@@ -323,7 +323,7 @@ class TestTaskRunnerIntegration:
 
         h = Harness(memory_db=":memory:", max_steps=6, sandbox_dir=str(tmp_path / "sb"))
         h.router = ScriptedRouter()
-        runner = TaskRunner(h, plugin_dir=str(plugin_dir), max_replan_rounds=0)
+        runner = TaskRunner(h, plugin_dir=str(plugin_dir), max_replan_rounds=0, history_path=str(tmp_path / "hist.jsonl"))
         events = drain(runner.start("写一份简单报告"), runner)
         assert events[-1]["type"] == "task_end"
         assert "报告" in events[-1]["data"]["reply"]  # reporter's deliverable

@@ -29,6 +29,7 @@ class Tool:
     parameters: dict[str, Any]  # JSON Schema
     func: Callable[..., Any]
     tags: set[str] = field(default_factory=set)
+    require_approval: bool = False
 
     def run(self, **kwargs: Any) -> str:
         """Execute and serialize the result to a string (what the LLM sees)."""
@@ -77,12 +78,17 @@ class ToolRegistry:
         description: str | None = None,
         parameters: dict[str, Any] | None = None,
         tags: set[str] | None = None,
+        require_approval: bool = False,
     ) -> Callable[..., Any]:
         """Register a tool; usable as `registry.register` or `@registry.register(...)`.
 
         When `parameters` is omitted, it is derived from the function
         signature: every non-optional parameter becomes a required string
         (annotations are respected when they're primitives).
+
+        `require_approval=True` marks the tool as side-effectful: the agent
+        loop will interrupt for a human decision before executing it
+        (human-in-the-loop gate).
         """
 
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -94,6 +100,7 @@ class ToolRegistry:
                 parameters=parameters or self._schema_from_signature(fn),
                 func=fn,
                 tags=set(tags or ()),
+                require_approval=require_approval,
             )
             if tool.name in self._tools:
                 raise ValueError(f"tool '{tool.name}' is already registered")
@@ -111,6 +118,15 @@ class ToolRegistry:
 
     def schemas(self) -> list[dict[str, Any]]:
         return [t.schema() for t in self._tools.values()]
+
+    def needs_approval(self, name: str) -> bool:
+        """Whether the named tool is flagged for human approval (unknown -> False)."""
+        tool = self._tools.get(name)
+        return bool(tool and tool.require_approval)
+
+    def approval_tools(self) -> list[str]:
+        """Sorted names of all tools flagged for human approval."""
+        return sorted(t.name for t in self._tools.values() if t.require_approval)
 
     def names(self) -> list[str]:
         return sorted(self._tools)

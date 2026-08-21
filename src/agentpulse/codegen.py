@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import concurrent.futures
 import hashlib
+import inspect
 import math
 import re
 from pathlib import Path
@@ -439,6 +440,34 @@ def list_plugins(plugin_dir: str | Path | None = None) -> list[dict[str, Any]]:
                 "source": source,
                 "mtime": s.st_mtime,
                 "size": s.st_size,
+                "builtin": False,
+            }
+        )
+    return out
+
+
+def list_builtin_detectors() -> list[dict[str, Any]]:
+    """Promoted detectors merged into `generated_detectors.py` (shipped with
+    the source). Read-only: they cannot be deleted or promoted again."""
+    from . import generated_detectors as _gd
+
+    out: list[dict[str, Any]] = []
+    for fn in getattr(_gd, "DETECTORS", []) or []:
+        doc = inspect.getdoc(fn) or ""
+        m = re.search(r"trigger:\s*(.*)", doc)
+        try:
+            source = inspect.getsource(fn)
+        except (OSError, TypeError):
+            source = ""
+        out.append(
+            {
+                "name": fn.__name__,
+                "trigger": m.group(1).strip() if m else "",
+                "source": source,
+                "mtime": 0,
+                "size": len(source.encode("utf-8")),
+                "builtin": True,
+                "kind": "内置晋升",
             }
         )
     return out

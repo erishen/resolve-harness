@@ -433,3 +433,33 @@ def try_fast_answer(
     except Exception:  # noqa: BLE001
         pass
     return None
+
+
+# Built-in core matchers (hardcoded in this module) — the "plugins" the
+# framework ships with. Listed for the plugin-management UI alongside the
+# promoted detectors and runtime plugins.
+_BUILTIN_MATCHERS: list[dict[str, str]] = [
+    {"name": "fastpath.arithmetic", "trigger": "计算 2+3 / 12×34 等于多少", "desc": "算术表达式安全求值（AST 白名单，零模型）"},
+    {"name": "fastpath.statistics", "trigger": "…的平均值 / 总和 / 最大最小（数字列表）", "desc": "数字列表统计"},
+    {"name": "fastpath.unit_convert", "trigger": "千米转米 / 摄氏度转华氏度", "desc": "常用单位换算"},
+    {"name": "fastpath.date_math", "trigger": "今天是周几 / N 天后的日期", "desc": "日期计算"},
+    {"name": "fastpath.base_convert", "trigger": "十进制转二进制 / 十六进制", "desc": "进制转换"},
+    {"name": "fastpath.text_stats", "trigger": "这段文字有多少字 / 多少行", "desc": "文本统计"},
+    {"name": "fastpath.time", "trigger": "现在几点 / 当前时间", "desc": "当前本地时间"},
+]
+
+
+def list_builtin_matchers() -> list[dict]:
+    """The core matchers baked into fastpath.py — read-only, always present."""
+    return [
+        {
+            "name": m["name"],
+            "trigger": m["trigger"],
+            "source": m["desc"],
+            "mtime": 0,
+            "size": 0,
+            "builtin": True,
+            "kind": "内置核心",
+        }
+        for m in _BUILTIN_MATCHERS
+    ]
