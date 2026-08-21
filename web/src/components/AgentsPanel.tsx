@@ -190,14 +190,17 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
             const labelX = (x1 + x2) / 2
             const labelY = (y1 + y2) / 2
             if (e.loop) {
-              // decision -> plan: a curved loop on the left
-              const path = `M ${x1 - 10} ${y1} C ${x1 - 120} ${y1 - 20}, ${x1 - 120} ${y1 - 90}, ${x2 - 10} ${y2 + 28}`
+              // decision -> plan: 走 evaluate/decision 之间的走廊向上绕回，
+              // 避免穿过 Specialist（控制点保持在 x>x1-130 通道内）
+              const path = `M ${x1 - 60} ${y1} C ${x1 - 130} ${y1 - 20}, ${x1 - 130} ${y1 - 220}, ${x2 - 5} ${y2 + 28}`
+              const lx = x1 - 130
+              const ly = (y1 + y2) / 2 - 30
               return (
                 <g key={i}>
                   <path d={path} fill="none" stroke="var(--text-dim)" strokeWidth="1.4" markerEnd="url(#arrow)" strokeDasharray="5 4" />
                   <text
-                    x={x1 - 125}
-                    y={(y1 + y2) / 2 - 40}
+                    x={lx}
+                    y={ly}
                     fontSize="10"
                     fill="var(--text-dim)"
                     textAnchor="middle"
@@ -207,7 +210,7 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
                     strokeLinejoin="round"
                   >
                     {renderEdgeLabel(e).split('\n').map((l, j) => (
-                      <tspan key={j} x={x1 - 125} dy={j === 0 ? 0 : 11}>
+                      <tspan key={j} x={lx} dy={j === 0 ? 0 : 11}>
                         {l}
                       </tspan>
                     ))}
