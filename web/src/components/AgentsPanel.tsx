@@ -78,11 +78,10 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
   const [data, setData] = useState<AgentsResponse | null>(null)
   const [error, setError] = useState('')
   const [fastOpen, setFastOpen] = useState(false)
+  // 只读展示：配置（模型/步数/并行/重试）统一在「设置」Tab 编辑
   const [parallel, setParallel] = useState(4)
   const [replan, setReplan] = useState(1)
   const [maxSteps, setMaxSteps] = useState(10)
-  const [saving, setSaving] = useState(false)
-  const [configMsg, setConfigMsg] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -117,25 +116,6 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
       cancelled = true
     }
   }, [])
-
-  const saveParallel = async () => {
-    setSaving(true)
-    setConfigMsg('')
-    try {
-      // only the numeric params live here; agent models are managed in Settings
-      const cfg = await api.setConfig(parallel, replan, maxSteps)
-      setParallel(cfg.parallel)
-      setReplan(cfg.max_replan_rounds)
-      setMaxSteps(cfg.max_steps)
-      setConfigMsg(
-        `已保存：Specialist 循环 ≤${cfg.max_steps} 步 · 并行 ×${cfg.parallel} · 失败重试 ${cfg.max_replan_rounds} 轮（重启后仍生效）`,
-      )
-    } catch (e) {
-      setConfigMsg(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSaving(false)
-    }
-  }
 
   if (error) return <div className="error-banner">{error}</div>
   if (!data) return <div className="empty">加载中…</div>
@@ -280,38 +260,8 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
             )
           })}
         </svg>
-        <div className="parallel-row">
-          <span className="parallel-label">🔁 Specialist 循环步数上限</span>
-          <input
-            type="number"
-            min={1}
-            max={50}
-            value={maxSteps}
-            onChange={(e) => setMaxSteps(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
-          />
-          <span className="parallel-label">⚙ 并行子任务数 N（Specialist 并发数）</span>
-          <input
-            type="number"
-            min={1}
-            max={16}
-            value={parallel}
-            onChange={(e) => setParallel(Math.max(1, Math.min(16, Number(e.target.value) || 1)))}
-          />
-          <span className="parallel-label">失败重试（重规划轮数）</span>
-          <input
-            type="number"
-            min={0}
-            max={5}
-            value={replan}
-            onChange={(e) => setReplan(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-          />
-          <button onClick={() => void saveParallel()} disabled={saving}>
-            {saving ? '保存中…' : '保存'}
-          </button>
-          {configMsg && <span className="parallel-msg">{configMsg}</span>}
-        </div>
         <div className="graph-hint">
-          ⓘ <b>objective 命中确定性查询</b> → 点「Fast Path」或其上方标签查看说明 · 点「Specialist ×N」查看其工具
+          ⓘ <b>objective 命中确定性查询</b> → 点「Fast Path」或其上方标签查看说明 · 点「Specialist ×N」查看其工具 · 运行参数与模型配置见「设置」Tab
         </div>
       </div>
       {fastOpen && <FastPathModal onClose={() => setFastOpen(false)} />}
