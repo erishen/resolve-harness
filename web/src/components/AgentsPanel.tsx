@@ -191,9 +191,9 @@ export default function AgentsPanel({ onGoTools }: AgentsPanelProps) {
             const labelY = (y1 + y2) / 2
             if (e.loop) {
               // decision -> plan：三段直线折线绕主链左外侧（x=-60），
-              // 不穿过任何节点；标签放在左侧垂直段
+              // 最后一段微斜向上把箭头收进 Planner 底边内，避免与边框线合并
               const outerX = x1 - 400 // decision x=340 -> -60（主链节点左缘 40 之外）
-              const path = `M ${x1 - 60} ${y1} L ${outerX} ${y1} L ${outerX} ${y2 + 28} L ${x2 - 5} ${y2 + 28}`
+              const path = `M ${x1 - 60} ${y1} L ${outerX} ${y1} L ${outerX} ${y2 + 28} L ${x2} ${y2 + 25}`
               const lx = outerX
               const ly = (y1 + y2) / 2
               return (
