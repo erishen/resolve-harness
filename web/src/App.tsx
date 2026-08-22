@@ -53,7 +53,7 @@ function TokenGate() {
   const [show, setShow] = useState(false)
   const [value, setValue] = useState('')
   const [checking, setChecking] = useState(false)
-  const [bad, setBad] = useState(false)
+  const [bad, setBad] = useState('')
 
   useEffect(() => {
     const onUnauthorized = () => setShow(true)
@@ -67,7 +67,7 @@ function TokenGate() {
     const t = value.trim()
     if (!t || checking) return
     setChecking(true)
-    setBad(false)
+    setBad('')
     try {
       const res = await fetch('/api/state', {
         headers: { Authorization: `Bearer ${t}` },
@@ -77,9 +77,14 @@ function TokenGate() {
         window.location.reload()
         return
       }
-      setBad(true)
+      // 区分两类失败：Token 真不对 vs 压根没连到我们的后端（如用文件方式打开了 dist）
+      setBad(
+        res.status === 401
+          ? '❌ Token 不正确：需与后端 .env 的 API_TOKEN 完全一致'
+          : `❌ 后端响应异常（HTTP ${res.status}）——请确认地址栏是 http://localhost:5173`,
+      )
     } catch {
-      setBad(true)
+      setBad('❌ 无法连接后端：请从 http://localhost:5173 访问（不要直接双击打开 dist 文件）')
     } finally {
       setChecking(false)
     }
