@@ -86,8 +86,9 @@
 > 🟡→✅ **verbose 日志截断工具参数**（300 字符），文件内容不再全量进日志。`graph/loop.py`
 > 已确认无泄漏：路径穿越拦截、密钥只回 env 变量名、provider 报错脱敏、无 prompt 日志、localStorage 仅存布局。
 >
-> 遗留（接受/待定）：① 全接口无鉴权——仅 CORS 限 localhost，若部署到非本机需先加 token；
-> ② 聊天历史/事件日志/长期记忆明文 SQLite（本地单用户可接受；事件 payload >16KB 已截断存 preview）。
+> 遗留（接受/待定）：① ~~全接口无鉴权~~ → ✅ 已加 API Token（.env API_TOKEN 可选启用，`5ca128c`），
+> 部署到非本机时在 .env 设 API_TOKEN 即可；② 聊天历史/事件日志/长期记忆明文 SQLite（本地单用户可接受；
+> 事件 payload >16KB 已截断存 preview）。
 
 - [x] **安全：codegen 沙箱补 `format_map` 拦截**，堵住「字符串字面量藏 dunder 遍历」旁路。
       `codegen.py:85`（回归测试 `test_format_map_dunder_bypass_rejected`）。
