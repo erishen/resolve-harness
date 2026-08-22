@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, formatValue } from './api'
+import { api, formatValue, setApiToken } from './api'
 import AgentsPanel from './components/AgentsPanel'
 import AuditPanel from './components/AuditPanel'
 import ChatPanel from './components/ChatPanel'
@@ -42,6 +42,57 @@ function sortMemories(rows: MemoryRow[]): MemoryRow[] {
  *  🕐 updated_at 标签展示；value 本体保留该前缀供 agent recall 读取。 */
 function displayValue(value: unknown): string {
   return formatValue(value).replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\s*/, '')
+}
+
+/**
+ * Token 门禁条：任何 /api 请求收到 401 时唯一出现的恢复入口（替代原
+ * window.prompt——阻塞线程且与并发时序纠缠，会反复弹出）。常驻显示直到
+ * 保存成功后整页刷新；也可手动关闭改走「设置 → API Token」。
+ */
+function TokenGate() {
+  const [show, setShow] = useState(false)
+  const [value, setValue] = useState('')
+
+  useEffect(() => {
+    const onUnauthorized = () => setShow(true)
+    window.addEventListener('rh:unauthorized', onUnauthorized)
+    return () => window.removeEventListener('rh:unauthorized', onUnauthorized)
+  }, [])
+
+  if (!show) return null
+  return (
+    <div className="token-gate">
+      <span className="token-gate-text">🔒 后端已启用 API Token 校验（.env 的 API_TOKEN）</span>
+      <input
+        type="password"
+        className="token-gate-input"
+        placeholder="粘贴 API Token"
+        value={value}
+        autoFocus
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && value.trim()) {
+            setApiToken(value)
+            window.location.reload()
+          }
+        }}
+      />
+      <button
+        type="button"
+        className="token-gate-btn primary"
+        disabled={!value.trim()}
+        onClick={() => {
+          setApiToken(value)
+          window.location.reload()
+        }}
+      >
+        保存并刷新
+      </button>
+      <button type="button" className="token-gate-btn" onClick={() => setShow(false)}>
+        稍后在设置里填
+      </button>
+    </div>
+  )
 }
 
 export default function App() {
@@ -144,6 +195,7 @@ export default function App() {
 
   return (
     <div className="app" style={{ gridTemplateColumns: `1fr ${sidebarW}px` }}>
+      <TokenGate />
       <section className="chat">
         <header className="chat-header">
           <span className={`status-dot ${online ? 'online' : ''}`} />

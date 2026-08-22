@@ -3407,3 +3407,57 @@ body {
   word-break: break-all;
   min-width: 0;
 }
+
+/* Token 门禁条：401 时的唯一恢复入口，固定吸顶、层级最高 */
+.token-gate {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: #2a2330;
+  border-bottom: 1px solid var(--accent, #7c6cf2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.token-gate-text {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.token-gate-input {
+  flex: 1;
+  max-width: 420px;
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.token-gate-btn {
+  font-size: 12px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.token-gate-btn.primary:not(:disabled) {
+  color: #fff;
+  background: var(--accent, #7c6cf2);
+  border-color: var(--accent, #7c6cf2);
+}
+
+.token-gate-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

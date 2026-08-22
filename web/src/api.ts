@@ -52,58 +52,39 @@ export function setApiToken(token: string): void {
   else localStorage.removeItem(TOKEN_KEY)
 }
 
-// 首屏多个请求并发收到 401 时只弹一次输入框，大家共享同一个结果
-let tokenPromptInFlight: Promise<string | null> | null = null
-
-function askForToken(): Promise<string | null> {
-  if (!tokenPromptInFlight) {
-    tokenPromptInFlight = Promise.resolve(
-      window.prompt('后端已启用 API Token 校验，请输入 API Token：'),
-    ).finally(() => {
-      // 本轮全部处理完后释放，下次再遇到 401 可重新询问
-      setTimeout(() => {
-        tokenPromptInFlight = null
-      }, 0)
-    })
+// ---- 401 统一处理：不再用 window.prompt（阻塞线程、与并发时序纠缠，会多次弹出）----
+// 遇到 401 只做两件事：① 抛 UnauthorizedError；② 每次页面加载广播一次
+// 'rh:unauthorized' 事件，由 App 的「Token 门禁条」负责收集输入（常驻、唯一）。
+export class UnauthorizedError extends Error {
+  constructor() {
+    super('401 API Token 无效，请在下方输入框填写（与 .env 的 API_TOKEN 一致）')
+    this.name = 'UnauthorizedError'
   }
-  return tokenPromptInFlight
 }
 
-// 每次页面加载，因「Token 无效」最多自动弹框一次（即使本机已存旧值）——
-// 平衡「输一次长期生效」与「存错值后仍有恢复入口」
-let promptedInvalidThisLoad = false
+let unauthorizedNotified = false
 
-async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
-  // 记下本次实际使用的 Token：并发场景下另一个请求可能刚保存了新值
-  const attempted = getApiToken()
+function notifyUnauthorizedOnce(): void {
+  if (unauthorizedNotified) return
+  unauthorizedNotified = true
+  window.dispatchEvent(new CustomEvent('rh:unauthorized'))
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getApiToken()
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (attempted) headers.Authorization = `Bearer ${attempted}`
+  if (token) headers.Authorization = `Bearer ${token}`
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: { ...headers, ...(init?.headers as Record<string, string>) },
   })
-  if (res.status === 401 && !retried) {
-    const current = getApiToken()
-    if (current && current !== attempted) {
-      // 同批其他请求刚存下了新 Token（本请求发出时还没有）→ 直接用它重试，不弹框
-      return request<T>(path, init, true)
-    }
-    // 从未配置过 → 必须问；配置过但无效 → 本页加载也再给一次输入机会
-    if (!attempted || !promptedInvalidThisLoad) {
-      promptedInvalidThisLoad = true
-      const input = await askForToken()
-      if (input !== null && input.trim()) {
-        setApiToken(input)
-        return request<T>(path, init, true)
-      }
-    }
-    // 走到这里 = 用户取消，或本轮已给过机会仍 401：报错引导去设置页
+  if (res.status === 401) {
+    notifyUnauthorizedOnce()
+    throw new UnauthorizedError()
   }
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    const hint =
-      res.status === 401 ? 'API Token 无效，请到「设置 → API Token」修改 ' : ''
-    throw new Error(`${res.status} ${hint}${body.slice(0, 160)}`)
+    throw new Error(`${res.status} ${body.slice(0, 200)}`)
   }
   return res.json() as Promise<T>
 }
@@ -291,6 +272,7 @@ export function openTaskStream(
         signal: ctrl.signal,
       })
       if (!res.ok || !res.body) {
+        if (res.status === 401) notifyUnauthorizedOnce()
         onError?.()
         return
       }
