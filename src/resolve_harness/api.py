@@ -307,11 +307,11 @@ def create_app(
             # the full conversation.
             reply = h.run(req.message, session_history=False, model=req.model)
         except LLMError as exc:
-            # 配置问题（缺 api_key / api_base / 模型名）对调用方属客户端错误：
-            # 返回 400 并给出明确指引，而不是把 traceback 包成 502。
+            # LLMError 已是被压缩过的友好提示（含可操作建议）；对调用方属客户端
+            # 错误，返回 400，而不是把 traceback 包成 502。
             raise HTTPException(
                 status_code=400,
-                detail=f"模型调用失败，请检查 LLM 配置（api_key / api_base / 模型名）：{exc}",
+                detail=f"模型调用失败：{exc}",
             ) from exc
         except Exception as exc:  # noqa: BLE001 - surface other errors as 502
             raise HTTPException(status_code=502, detail=f"agent error: {exc}") from exc
@@ -527,7 +527,7 @@ def create_app(
         except LLMError as exc:
             raise HTTPException(
                 status_code=400,
-                detail=f"模型调用失败，请检查 LLM 配置（api_key / api_base / 模型名）：{exc}",
+                detail=f"模型调用失败：{exc}",
             ) from exc
         except Exception as exc:  # noqa: BLE001 - surface other errors as 502
             raise HTTPException(status_code=502, detail=f"agent error: {exc}") from exc

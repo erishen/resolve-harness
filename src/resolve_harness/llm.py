@@ -86,6 +86,51 @@ def _retry_wait(exc: Exception, attempt: int, policy: "RetryPolicy") -> float:
     return policy.wait(attempt)
 
 
+def _friendly_error(model: str, exc: Exception | None, *, retries: int = 0) -> str:
+    """把 litellm 原始异常链压缩成给调用方（前端 / CLI）看的简短中文提示，
+    不再把整条 Provider JSON 原样暴露。按异常类型给出可操作建议；兜底只取
+    首行，避免把 traceback / 上游原始报文塞进 400 响应体。"""
+    if exc is None:
+        return f"模型 {model} 调用失败：未知错误（无异常详情）。"
+    text = str(exc)
+    low = text.lower()
+    if (
+        isinstance(exc, litellm.RateLimitError)
+        or "ratelimit" in low
+        or "rate-limited" in low
+        or "429" in low
+    ):
+        return (
+            f"模型 {model} 被上游限流（429），已重试 {retries} 次仍失败。"
+            "免费模型走的是公共共享配额池，人多时易触发。建议：稍后重试；"
+            "或在 OpenRouter 绑定你自己的 Decart key（BYOK）以使用独立配额；"
+            "也可改用非免费模型（去掉 :free 后缀）。"
+        )
+    if (
+        isinstance(exc, litellm.AuthenticationError)
+        or "401" in low
+        or "authentication" in low
+        or "api key" in low
+    ):
+        return f"模型 {model} 鉴权失败（401）：请检查 api_key / api_base 是否正确。"
+    if isinstance(exc, litellm.NotFoundError) or "404" in low or "not found" in low:
+        return f"模型 {model} 不存在或不可达：请检查模型名与 api_base。"
+    if (
+        isinstance(exc, litellm.BadRequestError)
+        or "bad request" in low
+        or "provider not provided" in low
+    ):
+        return (
+            f"模型 {model} 请求被拒（400）：请检查模型名格式"
+            "（需带 provider 前缀，如 openai/、openrouter/）。"
+        )
+    if isinstance(exc, (litellm.Timeout, litellm.InternalServerError)) or "timeout" in low:
+        return f"模型 {model} 调用超时或上游 5xx：已重试 {retries} 次仍失败，请稍后重试。"
+    # 兜底：只取首行，避免把整条异常链（含 Provider JSON）暴露给前端。
+    first_line = text.strip().splitlines()[0] if text.strip() else type(exc).__name__
+    return f"模型 {model} 调用失败：{first_line}"
+
+
 @dataclass
 class RetryPolicy:
     """Provider-scoped retry policy（借鉴 dsh `llm-retry`：重试是横切关注点）。
@@ -318,12 +363,14 @@ class LiteLLMRouter:
                     time.sleep(wait)
                     continue
                 raise LLMError(
-                    f"LLM call failed ({model_name}): 重试耗尽 - {exc}"
+                    _friendly_error(model_name, exc, retries=policy.max_retries)
                 ) from exc
             except Exception as exc:  # noqa: BLE001 - surface other provider errors uniformly
-                raise LLMError(f"LLM call failed ({model_name}): {exc}") from exc
+                raise LLMError(_friendly_error(model_name, exc)) from exc
         else:  # 不应到达（循环内已 break 或 raise），兜底
-            raise LLMError(f"LLM call failed ({model_name}): {last_exc}") from last_exc
+            raise LLMError(
+                _friendly_error(model_name, last_exc, retries=policy.max_retries)
+            ) from last_exc
 
         message = resp.choices[0].message
         raw: dict[str, Any] = {"role": "assistant", "content": message.content}

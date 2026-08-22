@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from resolve_harness.config import Settings
-from resolve_harness.llm import LiteLLMRouter, _extract_usage, usage_diff, _retry_wait
+from resolve_harness.llm import LiteLLMRouter, _extract_usage, usage_diff, _retry_wait, _friendly_error
 from resolve_harness.llm import RetryPolicy
 
 
@@ -148,3 +148,51 @@ def test_retry_wait_exponential_when_unknown() -> None:
     exc = _rate_limit_exc("rate limited")
     assert _retry_wait(exc, 0, RetryPolicy(backoff_base=1.5)) == 1.5
     assert _retry_wait(exc, 1, RetryPolicy(backoff_base=1.5)) == 3.0
+
+
+def _raw_exc(message: str) -> Exception:
+    return RuntimeError(message)
+
+
+def test_friendly_error_rate_limit_gives_actionable_hint() -> None:
+    # OpenRouter free 模型的 429 原文很长（含 Provider JSON），应被压缩成
+    # 带可操作建议的简短中文提示，而不是把原始报文塞给前端。
+    raw = (
+        'RateLimitError: OpenrouterException - {"error":{"message":'
+        '"Provider returned error","code":429,"metadata":{"raw":'
+        '"z-ai/glm-5.2:free is temporarily rate-limited upstream...",'
+        '"retry_after_seconds":5}}}'
+    )
+    msg = _friendly_error("openrouter/z-ai/glm-5.2:free", _raw_exc(raw), retries=3)
+    assert "429" in msg
+    assert "重试 3 次" in msg
+    assert "BYOK" in msg
+    assert "retry_after_seconds" not in msg  # 原始 JSON 不应泄露
+
+
+def test_friendly_error_auth_points_to_key() -> None:
+    msg = _friendly_error("openai/gpt-4o", _raw_exc("AuthenticationError: 401 invalid key"))
+    assert "鉴权失败" in msg
+    assert "api_key" in msg
+
+
+def test_friendly_error_provider_not_provided_hints_prefix() -> None:
+    msg = _friendly_error(
+        "z-ai/glm-5.2:free",
+        _raw_exc("BadRequestError: LLM Provider NOT provided. Pass in the LLM provider"),
+    )
+    assert "400" in msg
+    assert "provider 前缀" in msg
+
+
+def test_friendly_error_fallback_truncates_long_trace() -> None:
+    # 兜底：只取首行，避免整条异常链暴露。
+    long_exc = _raw_exc("ValueError: boom\n  File x.py line 1\n  File y.py line 2")
+    msg = _friendly_error("m", long_exc)
+    assert "ValueError: boom" in msg
+    assert "File y.py" not in msg
+
+
+def test_friendly_error_none_is_safe() -> None:
+    msg = _friendly_error("m", None)
+    assert "未知错误" in msg
