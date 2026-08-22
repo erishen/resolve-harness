@@ -43,6 +43,7 @@ export default function ChatPanel({ onAfterTurn }: Props) {
   const [histOpen, setHistOpen] = useState(false)
   const [fastOpen, setFastOpen] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [savedSet, setSavedSet] = useState<Set<string>>(new Set())
   // 会话级模型覆盖：'' = 跟随聊天模型；否则本会话用该模型库别名
   const [sessionModel, setSessionModel] = useState('')
   const [modelAliases, setModelAliases] = useState<string[]>([])
@@ -174,6 +175,19 @@ export default function ChatPanel({ onAfterTurn }: Props) {
       },
       () => setError('复制失败'),
     )
+  }
+
+  /** 把本条 AI 回答存入长期记忆（SQLite），供日后语义检索召回。 */
+  const saveMemory = (content: string, id: string) => {
+    if (savedSet.has(id) || busy) return
+    void (async () => {
+      try {
+        await api.addMemory(`chat:${Date.now()}`, content)
+        setSavedSet((s) => new Set(s).add(id))
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    })()
   }
 
   // swap an approval card for either a chained one or the final reply
@@ -312,6 +326,14 @@ export default function ChatPanel({ onAfterTurn }: Props) {
                   disabled={busy}
                 >
                   ↻ 重试
+                </button>
+                <button
+                  type="button"
+                  className="msg-save"
+                  onClick={() => saveMemory(m.content, m.id)}
+                  disabled={savedSet.has(m.id) || busy}
+                >
+                  {savedSet.has(m.id) ? '✓ 已存记忆' : '💾 保存记忆'}
                 </button>
               </div>
             )}
