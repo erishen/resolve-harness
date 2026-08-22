@@ -289,6 +289,49 @@ class TestSandbox:
         assert res.json()["deleted"] == 3
         assert c.get("/api/sandbox").json()["files"] == []
 
+    def test_clear_preserves_preexisting_files(self, tmp_path: Path) -> None:
+        """清空只删 Agent 创建的文件；沙箱确立前已存在的「原有文件」必须保留，
+        且默认不在列表中返回（preexisting=True 由前端隐藏）。"""
+        c = self._app_with_sandbox(tmp_path)
+        # 原有文件：在基线快照之后手工放置，等价于「切目录前就在」的用户文件
+        h = c.app.state.harness
+        h._sandbox_baseline = {"keep.txt", "docs/note.md"}
+        (tmp_path / "keep.txt").write_text("user-data", encoding="utf-8")
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "note.md").write_text("private", encoding="utf-8")
+        # Agent 创建的文件
+        (tmp_path / "made.txt").write_text("agent", encoding="utf-8")
+
+        listing = {f["path"]: f for f in c.get("/api/sandbox").json()["files"]}
+        assert listing["keep.txt"]["preexisting"] is True
+        assert listing["docs/note.md"]["preexisting"] is True
+        assert listing["made.txt"]["preexisting"] is False
+
+        res = c.delete("/api/sandbox")
+        assert res.status_code == 200
+        assert res.json()["deleted"] == 1  # 只删了 Agent 创建的那一个
+        # 原有文件原封不动
+        assert (tmp_path / "keep.txt").read_text(encoding="utf-8") == "user-data"
+        assert (tmp_path / "docs" / "note.md").read_text(encoding="utf-8") == "private"
+        assert not (tmp_path / "made.txt").exists()
+
+    def test_set_sandbox_dir_resnapshots_baseline(self, tmp_path: Path) -> None:
+        """热切换沙箱根目录后，新目录里已有的文件即成为新的「原有文件」基线。"""
+        from resolve_harness.harness import Harness
+
+        dir_a, dir_b = tmp_path / "a", tmp_path / "b"
+        dir_b.mkdir()
+        (dir_b / "personal.txt").write_text("mine", encoding="utf-8")
+
+        h = Harness(sandbox_dir=str(dir_a))
+        assert h._sandbox_baseline == set()  # 空目录 → 无原有文件
+
+        h.set_sandbox_dir(str(dir_b))
+        assert h._sandbox_baseline == {"personal.txt"}
+        # 切换后 Agent 新建的文件不属于基线
+        h.tools.execute("write_file", {"path": "out.txt", "content": "x"})
+        assert h._sandbox_baseline == {"personal.txt"}
+
     def test_set_sandbox_dir_rebinds_fs_tools(self, tmp_path: Path) -> None:
         from resolve_harness.harness import Harness
 

@@ -56,6 +56,25 @@
        import-time `create_app()` 不再触碰磁盘真实库；`test_tasks.py` 共享 `/tmp` 改为 `tmp_path`
        隔离（autouse `_task_env`）。`event_log.py` / `chat_history.py` / `memory/long_term.py` / `tests/test_tasks.py`
 
+## 六、能力扩展：Skills 与 MCP
+
+> 来自需求讨论。结论：**Skills 暂不做重型子系统**（与现有 codegen 插件 / 长期记忆重叠），
+> 仅当产品方向是「非程序员也能配领域能力」时才上**轻量版（方案 B）**；**MCP 作为标准协议接入价值高**，单独立项。
+
+- [ ] **Skills（轻量版，按需）**：让非程序员用 `skill.yaml`（元信息）+ `prompt.md`（指令）+ 可选工具白名单
+      定义可复用能力包（如「财报分析」「SQL 生成」），聊天/任务时按需注入上下文；
+      复用现有 `ToolRegistry` 与记忆/注入通道，**不做独立运行时沙箱**。
+      触发条件：产品要做「用户自定义领域能力」而非仅代码级插件。
+      落点：新增 `skills/` 目录 + 加载器（合并进 `Harness` / `TaskRunner` 上下文注入）、
+      `web/src` 启用/禁用 UI。
+- [ ] **MCP 接入（Model Context Protocol）**：支持连接 MCP 服务器，将其暴露的 tools / resources
+      注册进 `ToolRegistry`，让 agent 复用外部生态能力（文件系统、数据库、第三方 API 等）。
+      - 传输：stdio（本地子进程）/ SSE（远程）二选一或都支持；
+      - 生命周期：servers 配置化（`data/config.json` 或 `.env`），启动时连接、工具自动注册/去重；
+      - 安全：MCP 工具同样走 `require_approval` 人工门（交互式 chat）与任务沙箱隔离。
+      落点：新增 `src/resolve_harness/mcp/`（`client` / `session` / `tool_adapter`）、
+      `ToolRegistry` 适配、`api.py` + `web/src` 服务器管理 UI。
+
 ## 近期已完成（本周期）
 
 - [x] **安全：codegen 沙箱补 `format_map` 拦截**，堵住「字符串字面量藏 dunder 遍历」旁路。

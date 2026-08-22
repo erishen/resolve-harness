@@ -164,6 +164,9 @@ def _load_config() -> dict[str, Any]:
     hist = raw.get("sandbox_history")
     if isinstance(hist, list):
         cfg["sandbox_history"] = [str(x) for x in hist if isinstance(x, str) and x]
+    bl = raw.get("sandbox_baseline")
+    if isinstance(bl, list):
+        cfg["sandbox_baseline"] = [str(x) for x in bl if isinstance(x, str) and x]
     return cfg
 
 
@@ -269,7 +272,19 @@ def create_app(
 ) -> FastAPI:
     """App factory; allows tests to inject a harness/runner with fakes."""
     _cfg = _load_config()
-    h = harness or Harness(sandbox_dir=_cfg.get("sandbox_dir") or None)
+    h = harness or Harness(
+        sandbox_dir=_cfg.get("sandbox_dir") or None,
+        sandbox_baseline=_cfg.get("sandbox_baseline"),
+    )
+    # 锚定基线：仅当「由配置创建真实 Harness 且 config 尚无基线记录」时才落盘一次，
+    # 保证重启后判定稳定（不会因重新快照把 Agent 已建的文件误判为原有文件）。
+    # 测试注入的 fake harness 不写盘，避免污染真实 data/config.json。
+    if harness is None and "sandbox_baseline" not in _cfg:
+        _cfg["sandbox_baseline"] = sorted(getattr(h, "_sandbox_baseline", set()))
+        try:
+            _save_config(_cfg)
+        except OSError:
+            pass
     app = FastAPI(title="Resolve Harness", version="0.2.0")
     app.state.harness = h
     app.state.runner = runner or TaskRunner(h)
@@ -798,13 +813,15 @@ def _register_sandbox_routes(app: FastAPI) -> None:
                 if not p.is_file():
                     continue
                 st = p.stat()
+                rel = p.relative_to(base).as_posix()
                 files.append(
                     {
-                        "path": p.relative_to(base).as_posix(),
+                        "path": rel,
                         "size": st.st_size,
                         "mtime": int(st.st_mtime),
                         "is_text": p.suffix.lower() in _TEXT_SUFFIXES,
                         "kind": _file_kind(p.suffix.lower()),
+                        "preexisting": rel in getattr(h, "_sandbox_baseline", set()),
                     }
                 )
             # newest first — the agent just wrote something → it surfaces on top
@@ -877,6 +894,10 @@ def _register_sandbox_routes(app: FastAPI) -> None:
         deleted = 0
         for p in sorted(base.rglob("*"), reverse=True):
             if p.is_file():
+                rel = p.relative_to(base).as_posix()
+                # 只删 Agent 创建的文件；切换前就存在的「原有文件」一律保留
+                if rel in getattr(h, "_sandbox_baseline", set()):
+                    continue
                 p.unlink()
                 deleted += 1
             elif p.is_dir():
@@ -909,6 +930,7 @@ def _register_sandbox_routes(app: FastAPI) -> None:
         cfg = _load_config()
         cfg["sandbox_dir"] = str(new_dir)
         cfg["sandbox_history"] = history
+        cfg["sandbox_baseline"] = sorted(getattr(h, "_sandbox_baseline", set()))
         _save_config(cfg)
         return {"sandbox_dir": str(new_dir), "sandbox_history": history}
 

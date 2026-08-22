@@ -2369,6 +2369,23 @@ body {
   color: var(--accent);
 }
 
+.sandbox-showall {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.sandbox-showall input {
+  cursor: pointer;
+}
+
 .sandbox-item {
   display: flex;
   align-items: stretch;
@@ -2388,6 +2405,25 @@ body {
 .sandbox-item.active {
   border-color: var(--accent);
   background: #2a3350;
+}
+
+/* 沙箱确立前已存在的「原有文件」：默认隐藏，显示时以暗色 + 角标区分 */
+.sandbox-item.preexisting {
+  opacity: 0.62;
+  border-style: dashed;
+}
+
+.sandbox-item-origin {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--text-dim);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+  vertical-align: middle;
 }
 
 .sandbox-item-main {

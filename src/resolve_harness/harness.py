@@ -116,6 +116,7 @@ class Harness:
         short_term_max: int = 40,
         register_builtin_tools: bool = True,
         sandbox_dir: str | None = None,
+        sandbox_baseline: list[str] | None = None,
         verbose: bool | None = None,
     ) -> None:
         # Settings: explicit args win over .env, which wins over defaults.
@@ -154,6 +155,16 @@ class Harness:
                         require_approval=tool.require_approval,
                     )
         self.sandbox_dir = sandbox_dir
+
+        # 沙箱「原有文件」基线：记录沙箱根目录确立时（init / 热切换）已存在的
+        # 相对路径集合。Agent 之后创建的文件不算在内 —— 清空/枚举时据此区分，
+        # 避免误删或暴露用户原有的个人文件。
+        # sandbox_baseline=None → 本次（重新）快照当前目录；传入 list → 直接用作基线。
+        if sandbox_baseline is None:
+            self._sandbox_baseline = set()
+            self._snapshot_sandbox_baseline()
+        else:
+            self._sandbox_baseline = set(sandbox_baseline)
 
         # Human-in-the-loop: any tool flagged require_approval routes its
         # calls through the graph's approval gate (interrupt + resume).
@@ -258,6 +269,17 @@ class Harness:
         self.tools.register(
             _make_run_script_tool(self.sandbox_dir), require_approval=True
         )
+        # 热切换后，新根目录里当下已有的文件即视为「原有文件」基线
+        self._snapshot_sandbox_baseline()
+
+    def _snapshot_sandbox_baseline(self) -> None:
+        """记录当前沙箱根目录下已存在的相对路径，作为「原有文件」基线。"""
+        base = Path(self.sandbox_dir) if self.sandbox_dir else None
+        self._sandbox_baseline = set()
+        if base and base.is_dir():
+            for p in base.rglob("*"):
+                if p.is_file():
+                    self._sandbox_baseline.add(p.relative_to(base).as_posix())
 
     # -- the agent loop --------------------------------------------------------
 

@@ -230,6 +230,8 @@ export interface SandboxFile {
   mtime: number
   is_text: boolean
   kind: 'text' | 'markdown' | 'html' | 'image' | 'pdf' | 'csv' | 'json' | 'code' | 'binary'
+  /** 沙箱根目录确立前就已存在的「原有文件」，默认隐藏、清空时保留。 */
+  preexisting?: boolean
 }
 
 /** 事件日志条目（审计 Tab / /api/events 返回）。 */

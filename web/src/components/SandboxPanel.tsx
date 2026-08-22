@@ -111,6 +111,8 @@ export default function SandboxPanel() {
   const [sandboxDir, setSandboxDir] = useState<string | null>(null)
   const [history, setHistory] = useState<string[]>([])
   const [newDir, setNewDir] = useState('')
+  // 默认隐藏沙箱确立前就存在的「原有文件」，避免误显示/误删用户个人文件
+  const [showAll, setShowAll] = useState(false)
 
   // edit mode / rendered preview mode
   const [editing, setEditing] = useState(false)
@@ -202,9 +204,14 @@ export default function SandboxPanel() {
     [selected, load],
   )
 
+  // Agent 创建的文件数 / 原有文件数（清空只删前者）
+  const managedCount = useMemo(() => files.filter((f) => !f.preexisting).length, [files])
+  const preexistingCount = useMemo(() => files.filter((f) => f.preexisting).length, [files])
+
   const clearAll = useCallback(async () => {
-    if (files.length === 0) return
-    if (!window.confirm(`清空沙箱全部 ${files.length} 个文件？此操作不可撤销。`)) return
+    if (managedCount === 0) return
+    const hint = preexistingCount > 0 ? `（原有 ${preexistingCount} 个文件将保留）` : ''
+    if (!window.confirm(`清空沙箱中 ${managedCount} 个 Agent 创建的文件？此操作不可撤销。${hint}`)) return
     try {
       await api.sandboxClear()
       setSelected(null)
@@ -214,7 +221,7 @@ export default function SandboxPanel() {
     } catch {
       setError('清空失败')
     }
-  }, [files.length, load])
+  }, [managedCount, preexistingCount, load])
 
   const applyLocation = useCallback(
     async (path: string) => {
@@ -260,12 +267,15 @@ export default function SandboxPanel() {
     { label: '项目沙箱', path: '__default__' },
   ]
 
-  // 类型过滤：选中分组只显示匹配 kind 的文件；每类计数（全部分组计数随文件变化）。
+  // 类型过滤：选中分组只显示匹配 kind 的文件；默认隐藏「原有文件」（showAll 关闭时）。
   const filteredFiles = useMemo(() => {
-    if (filter === 'all') return files
-    const kinds = FILTER_DEFS.find((d) => d.key === filter)?.kinds
-    return kinds ? files.filter((f) => kinds.has(f.kind)) : files
-  }, [files, filter])
+    let list = showAll ? files : files.filter((f) => !f.preexisting)
+    if (filter !== 'all') {
+      const kinds = FILTER_DEFS.find((d) => d.key === filter)?.kinds
+      if (kinds) list = list.filter((f) => kinds.has(f.kind))
+    }
+    return list
+  }, [files, filter, showAll])
   const typeCounts = useMemo(() => {
     const counts: Record<SandboxFilter, number> = { all: files.length, image: 0, doc: 0, code: 0, other: 0 }
     for (const f of files) {
@@ -286,14 +296,15 @@ export default function SandboxPanel() {
           </span>
         </div>
         <div className="sandbox-actions">
-          <button
-            type="button"
-            className="ex-regen danger"
-            onClick={() => void clearAll()}
-            disabled={files.length === 0}
-          >
-            🗑 清空
-          </button>
+            <button
+              type="button"
+              className="ex-regen danger"
+              onClick={() => void clearAll()}
+              disabled={managedCount === 0}
+              title={preexistingCount > 0 ? `清空只删 Agent 创建的文件，保留 ${preexistingCount} 个原有文件` : undefined}
+            >
+              🗑 清空
+            </button>
               <button type="button" className="ex-regen" onClick={() => void load()}>
                 🔄 刷新
               </button>
@@ -370,6 +381,16 @@ export default function SandboxPanel() {
       <div className="sandbox-body">
         <div className="sandbox-list">
           <div className="sandbox-filters">
+            {preexistingCount > 0 && (
+              <label className="sandbox-showall" title="显示沙箱目录确立前就存在的文件（清空时不会被删除）">
+                <input
+                  type="checkbox"
+                  checked={showAll}
+                  onChange={(e) => setShowAll(e.target.checked)}
+                />
+                显示原有文件（{preexistingCount}）
+              </label>
+            )}
             {FILTER_DEFS.map((d) => (
               <button
                 key={d.key}
@@ -387,16 +408,21 @@ export default function SandboxPanel() {
             <div className="empty">沙箱为空 — 运行一个「写文件」任务试试</div>
           )}
           {files.length > 0 && filteredFiles.length === 0 && (
-            <div className="empty">该类型下暂无文件</div>
+            <div className="empty">
+              {preexistingCount > 0 && !showAll
+                ? `当前仅显示 Agent 创建的文件，无匹配；原有 ${preexistingCount} 个文件已隐藏`
+                : '该类型下暂无文件'}
+            </div>
           )}
           {filteredFiles.map((f) => (
             <div
               key={f.path}
-              className={`sandbox-item ${selected?.path === f.path ? 'active' : ''}`}
+              className={`sandbox-item ${selected?.path === f.path ? 'active' : ''}${f.preexisting ? ' preexisting' : ''}`}
             >
               <button type="button" className="sandbox-item-main" onClick={() => void openFile(f)}>
                 <span className="sandbox-item-name" title={f.path}>
                   {f.path}
+                  {f.preexisting && <span className="sandbox-item-origin" title="沙箱确立前已存在的原有文件">原</span>}
                 </span>
                 <span className="sandbox-item-meta">
                   {formatSize(f.size)} · {formatMtime(f.mtime)}
