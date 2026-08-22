@@ -506,6 +506,8 @@ def create_app(
                 "model": app.state.env_model,
                 "api_key_env": "LLM_API_KEY",
             },
+            # 只暴露「是否启用校验」，不回传 token 本身；前端据此显示设置提示
+            "api_token_required": bool(app.state.api_token),
         }
 
     @app.put("/api/config")

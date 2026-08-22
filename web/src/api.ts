@@ -34,6 +34,8 @@ export interface AppConfig {
   models: Record<string, ModelProfile>
   /** .env 默认模型（LLM_MODEL / LLM_API_BASE / LLM_API_KEY），只读展示 */
   env_model: { base_url: string; model: string; api_key_env: string }
+  /** 后端 .env 设了 API_TOKEN → true（设置页据此提示必填） */
+  api_token_required?: boolean
 }
 
 // ---- API Token（对应后端 .env 的 API_TOKEN）----------------------------

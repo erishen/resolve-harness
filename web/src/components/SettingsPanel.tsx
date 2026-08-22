@@ -145,6 +145,7 @@ export default function SettingsPanel({ onModelChange }: { onModelChange?: () =>
   // API Token：仅存本机 localStorage，对应 .env 的 API_TOKEN（后端启用校验时必填）
   const [tokenDraft, setTokenDraft] = useState(getApiToken())
   const [tokenMsg, setTokenMsg] = useState('')
+  const authRequired = cfg?.api_token_required ?? false
   const [autoSaving, setAutoSaving] = useState(false)
   const [msg, setMsg] = useState('')
   const [error, setError] = useState('')
@@ -448,24 +449,37 @@ export default function SettingsPanel({ onModelChange }: { onModelChange?: () =>
             <span className="settings-label">
               API Token
               <span className="settings-hint">
-                后端 .env 设 API_TOKEN=xxx 时，此处需填相同值；仅存本机浏览器
+                {authRequired
+                  ? '后端已启用校验（.env 设了 API_TOKEN），此处必须填相同值；仅存本机浏览器'
+                  : '后端未启用校验（.env 未设 API_TOKEN），可留空'}
               </span>
             </span>
             <input
               type="password"
               className="settings-input"
-              placeholder="后端未启用则留空"
+              placeholder={authRequired ? '必填：与 .env 的 API_TOKEN 一致' : '后端未启用则留空'}
               value={tokenDraft}
               onChange={(e) => setTokenDraft(e.target.value)}
               onBlur={() => {
-                setApiToken(tokenDraft)
-                setTokenMsg(tokenDraft.trim() ? '已保存到本机' : '已清除')
+                // 与已存值相同则不提示，避免点一下输入框就冒「已清除」的噪音
+                const next = tokenDraft.trim()
+                if (next === getApiToken()) {
+                  setTokenMsg('')
+                  return
+                }
+                setApiToken(next)
+                setTokenMsg(next ? '已保存到本机' : '已清除本机保存的 Token')
               }}
             />
           </label>
           {tokenMsg && (
             <div className="settings-hint" style={{ paddingLeft: 2 }}>
               {tokenMsg}
+            </div>
+          )}
+          {authRequired && !tokenDraft.trim() && (
+            <div className="settings-hint" style={{ paddingLeft: 2, color: 'var(--warn, #e0a24a)' }}>
+              ⚠ 后端已启用校验但本机未保存 Token，接口请求会被拒绝（401）
             </div>
           )}
         </div>
