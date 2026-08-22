@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import queue
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,8 @@ from .event_log import EventLog
 from .harness import Harness, _default_sandbox_dir
 from .llm import LLMError, usage_diff, usage_snapshot
 from .tasks import TaskRunner
+
+logger = logging.getLogger(__name__)
 
 # Vite dev server default port; the frontend proxies /api here in dev.
 _ALLOWED_ORIGINS = [
@@ -333,8 +336,9 @@ def create_app(
                 status_code=400,
                 detail=f"模型调用失败：{exc}",
             ) from exc
-        except Exception as exc:  # noqa: BLE001 - surface other errors as 502
-            raise HTTPException(status_code=502, detail=f"agent error: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 - 非 LLM 的内部异常：记日志，对外给友好文案
+            logger.exception("[DEBUG] chat failed: %s", exc)
+            raise HTTPException(status_code=502, detail="服务暂时不可用（内部错误），请稍后重试") from exc
         payload = _chat_payload(h, reply, usage_diff(h.router, before))
         _record_chat_turn(app, req.message, payload)
         return payload
@@ -549,8 +553,9 @@ def create_app(
                 status_code=400,
                 detail=f"模型调用失败：{exc}",
             ) from exc
-        except Exception as exc:  # noqa: BLE001 - surface other errors as 502
-            raise HTTPException(status_code=502, detail=f"agent error: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 - 非 LLM 的内部异常：记日志，对外给友好文案
+            logger.exception("[DEBUG] approve failed: %s", exc)
+            raise HTTPException(status_code=502, detail="服务暂时不可用（内部错误），请稍后重试") from exc
         payload = _chat_payload(h, reply, usage_diff(h.router, before))
         _record_chat_turn(app, "(resume approval)", payload)
         return payload

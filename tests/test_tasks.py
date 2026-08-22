@@ -581,6 +581,36 @@ class TestSubtasksFastPath:
         assert "报告" in normal["title"]
         assert types_of(events)[-1] == "task_end"
 
+    def test_subtask_fastpath_reads_per_task_sandbox(self, tmp_path) -> None:
+        """子任务的 fast-path「读取沙箱里的 X」必须读 per-task 隔离目录，
+        而非全局沙箱根（修复前会泄漏/误读全局文件）。"""
+        sb = tmp_path / "sb"
+        sb.mkdir(parents=True, exist_ok=True)
+        # 全局沙箱放一个同名文件，内容不同 —— 用来区分读的是哪层目录
+        (sb / "note.txt").write_text("GLOBAL_CONTENT", encoding="utf-8")
+
+        script = [
+            plan_json(("写文件", "写 note.txt"), ("读取", "读取沙箱里的 note.txt")),
+            tool_call("write_file", {"path": "note.txt", "content": "TASK_CONTENT"}),
+            answer("已写入 note.txt"),
+            verdict_json(True, 90),
+            answer("# 交付\n完成"),
+        ]
+        h = Harness(memory_db=":memory:", max_steps=6, sandbox_dir=str(sb))
+        h.router = UsageRouter(list(script))
+        runner = TaskRunner(h, parallel=1, codegen=False, history_path=str(tmp_path / "h.db"))
+        task_id = runner.start("写再读")
+        events = drain(task_id, runner)
+        assert types_of(events)[-1] == "task_end"
+
+        dones = [e["data"] for e in events if e["type"] == "subtask_done"]
+        read = next(d for d in dones if d.get("fast") and "读取" in d["title"])
+        # 读到的是 per-task 隔离目录里的 TASK_CONTENT，而不是全局的 GLOBAL_CONTENT
+        assert "TASK_CONTENT" in read["summary"]
+        assert "GLOBAL_CONTENT" not in read["summary"]
+        # 全局文件未被触碰
+        assert (sb / "note.txt").read_text(encoding="utf-8") == "GLOBAL_CONTENT"
+
 
 class TestStop:
     """后端必须能真正中止运行中的任务，而不能只断开前端 SSE。"""

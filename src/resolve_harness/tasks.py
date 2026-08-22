@@ -403,7 +403,7 @@ class TaskRunner:
 
             fast = try_fast_answer(
                 objective,
-                sandbox_dir=self.harness.sandbox_dir,
+                sandbox_dir=str(self._task_workspace_dir(task_id)),
                 plugin_dir=self.plugin_dir,
             )
             if fast is not None:
@@ -518,6 +518,11 @@ class TaskRunner:
 
     # -- per-task isolated workspace ----------------------------------------------
 
+    def _task_workspace_dir(self, task_id: str) -> Path:
+        """任务隔离沙箱目录：<global_sandbox>/tasks/<task_id>/（与 _make_task_workspace 一致）。"""
+        base = Path(self.harness.sandbox_dir) if self.harness.sandbox_dir else default_sandbox_dir()
+        return base / "tasks" / task_id
+
     def _make_task_workspace(self, task_id: str) -> tuple[Path, ToolRegistry]:
         """Give every task its own sandbox directory + registry so parallel
         subtasks never see each other's (or older tasks') files.
@@ -526,8 +531,7 @@ class TaskRunner:
         every other tool (fetch / get_current_time…) is copied as-is from the
         harness registry (memory tools excluded on purpose).
         """
-        base = Path(self.harness.sandbox_dir) if self.harness.sandbox_dir else default_sandbox_dir()
-        task_dir = base / "tasks" / task_id
+        task_dir = self._task_workspace_dir(task_id)
         registry = ToolRegistry()
         for tool in self.harness.tools:
             if tool.name in {"read_file", "write_file", "list_files", "run_script"}:
@@ -589,7 +593,7 @@ class TaskRunner:
 
             fast = try_fast_answer(
                 st["instruction"],
-                sandbox_dir=self.harness.sandbox_dir,
+                sandbox_dir=str(self._task_workspace_dir(record.task_id)),
                 plugin_dir=self.plugin_dir,
             )
             if fast is not None:
