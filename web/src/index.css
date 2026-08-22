@@ -3002,7 +3002,7 @@ body {
 .settings-profile-head,
 .settings-profile-row {
   display: grid;
-  grid-template-columns: 110px 1.4fr 1.2fr 1.2fr 28px;
+  grid-template-columns: 200px 1.4fr 1.2fr 1.2fr 28px;
   gap: 8px;
   align-items: center;
 }
