@@ -46,7 +46,7 @@ dev: ## 一键启动前后端：先清理 :8000/:5173 残留，后端先起、�
 	@bash scripts/dev.sh
 
 api: ## 启动 FastAPI 后端（http://127.0.0.1:8000，文档 /docs）
-	$(UV) run uvicorn resolve_harness.api:app --reload --port 8000
+	$(UV) run python -m uvicorn resolve_harness.api:app --reload --port 8000
 
 web-dev: ## 启动 Vite 前端（http://localhost:5173，需先 pnpm install）
 	cd web && $(PNPM) dev

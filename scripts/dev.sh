@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 node scripts/kill-dev.mjs
 
 echo "[dev] 启动后端 uvicorn :8000 ..."
-uv run uvicorn resolve_harness.api:app --reload --port 8000 &
+uv run python -m uvicorn resolve_harness.api:app --reload --port 8000 &
 BACKEND_PID=$!
 
 # wait for the backend to answer before launching the frontend
