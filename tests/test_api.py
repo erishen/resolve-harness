@@ -187,6 +187,8 @@ class TestApiTokenAuth:
         assert "API Token" in r.json()["detail"]
         assert c.get("/api/state", headers={"Authorization": "Bearer sekrit"}).status_code == 200
         assert c.get("/api/state", headers={"X-API-Token": "sekrit"}).status_code == 200
+        # health 白名单：探活不需要 Token
+        assert c.get("/api/health").status_code == 200
 
     def test_preflight_options_not_blocked(
         self, monkeypatch: pytest.MonkeyPatch

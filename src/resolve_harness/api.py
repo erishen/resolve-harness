@@ -321,7 +321,8 @@ def create_app(
 
     # API Token 鉴权：.env 设 API_TOKEN 即启用，全部 /api/* 需携带
     # `Authorization: Bearer <token>`（或 X-API-Token）。不设 = 本地免鉴权。
-    # OPTIONS 预检放行（浏览器预检请求不会带自定义头，交给 CORS 层应答）。
+    # OPTIONS 预检放行（浏览器预检请求不会带自定义头，交给 CORS 层应答）；
+    # /api/health 白名单——探活监控只拿 status/model，不值得为此配 Token。
     app.state.api_token = (os.getenv("API_TOKEN") or "").strip()
 
     @app.middleware("http")
@@ -330,6 +331,7 @@ def create_app(
         if (
             token
             and request.url.path.startswith("/api/")
+            and request.url.path != "/api/health"
             and request.method != "OPTIONS"
         ):
             header = request.headers.get("authorization", "")
