@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentpulse.memory import LongTermMemory, ShortTermMemory
+from resolve_harness.memory import LongTermMemory, ShortTermMemory
 
 
 # -- short-term -------------------------------------------------------------

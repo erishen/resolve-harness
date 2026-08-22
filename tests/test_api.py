@@ -9,9 +9,9 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from agentpulse.api import create_app
-from agentpulse.memory import LongTermMemory
-from agentpulse.tools.registry import ToolRegistry
+from resolve_harness.api import create_app
+from resolve_harness.memory import LongTermMemory
+from resolve_harness.tools.registry import ToolRegistry
 
 
 class FakeHarness:
@@ -67,8 +67,8 @@ def client() -> TestClient:
 def _isolate_deleted_examples(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the example-tombstone store away from the real data/ dir."""
     target = tmp_path / "deleted_examples.json"
-    monkeypatch.setattr("agentpulse.examples._deleted_file", lambda: target)
-    monkeypatch.setattr("agentpulse.examples._cache", None)
+    monkeypatch.setattr("resolve_harness.examples._deleted_file", lambda: target)
+    monkeypatch.setattr("resolve_harness.examples._cache", None)
 
 
 class TestApi:
@@ -321,8 +321,8 @@ class TestChatHistory:
 
 class TestTools:
     def test_list_tools_with_modes(self, tmp_path: Path) -> None:
-        from agentpulse.chat_history import ChatHistoryStore
-        from agentpulse.harness import Harness
+        from resolve_harness.chat_history import ChatHistoryStore
+        from resolve_harness.harness import Harness
 
         h = Harness(memory_db=str(tmp_path / "m.db"))
         c = TestClient(
@@ -352,8 +352,8 @@ class TestTools:
 
 class TestPluginList:
     def test_plugins_include_builtin_core_and_promoted(self, tmp_path: Path) -> None:
-        from agentpulse.chat_history import ChatHistoryStore
-        from agentpulse.harness import Harness
+        from resolve_harness.chat_history import ChatHistoryStore
+        from resolve_harness.harness import Harness
 
         h = Harness(memory_db=str(tmp_path / "m.db"))
         c = TestClient(
@@ -374,8 +374,8 @@ class TestPluginList:
         h.close()
 
     def test_clear_memories(self, tmp_path: Path) -> None:
-        from agentpulse.chat_history import ChatHistoryStore
-        from agentpulse.harness import Harness
+        from resolve_harness.chat_history import ChatHistoryStore
+        from resolve_harness.harness import Harness
 
         h = Harness(memory_db=str(tmp_path / "m.db"))
         h.long_term.remember("k1", "v1", scope="default")
@@ -395,8 +395,8 @@ class TestPluginList:
 
 class TestAgents:
     def test_agents_and_graph(self, tmp_path: Path) -> None:
-        from agentpulse.chat_history import ChatHistoryStore
-        from agentpulse.harness import Harness
+        from resolve_harness.chat_history import ChatHistoryStore
+        from resolve_harness.harness import Harness
 
         h = Harness(memory_db=str(tmp_path / "m.db"))
         c = TestClient(
@@ -418,10 +418,10 @@ class TestAgents:
 
 class TestConfig:
     def test_parallel_get_set_persist(self, tmp_path: Path, monkeypatch) -> None:
-        import agentpulse.api as api_mod
+        import resolve_harness.api as api_mod
 
-        from agentpulse.chat_history import ChatHistoryStore
-        from agentpulse.harness import Harness
+        from resolve_harness.chat_history import ChatHistoryStore
+        from resolve_harness.harness import Harness
 
         cfg = tmp_path / "config.json"
         monkeypatch.setattr(api_mod, "_config_path", lambda: cfg)
@@ -452,10 +452,10 @@ class TestConfig:
         h.close()
 
     def test_agent_models_get_set_persist(self, tmp_path: Path, monkeypatch) -> None:
-        import agentpulse.api as api_mod
+        import resolve_harness.api as api_mod
 
-        from agentpulse.chat_history import ChatHistoryStore
-        from agentpulse.harness import Harness
+        from resolve_harness.chat_history import ChatHistoryStore
+        from resolve_harness.harness import Harness
 
         cfg = tmp_path / "config.json"
         monkeypatch.setattr(api_mod, "_config_path", lambda: cfg)
@@ -502,8 +502,8 @@ class TestConfig:
 
 def make_log_client(tmp_path: Path) -> tuple[TestClient, Any]:
     """Build an app with a real Harness + ChatHistoryStore writing to temp dirs."""
-    from agentpulse.chat_history import ChatHistoryStore
-    from agentpulse.harness import Harness
+    from resolve_harness.chat_history import ChatHistoryStore
+    from resolve_harness.harness import Harness
 
     h = Harness(memory_db=":memory:", sandbox_dir=str(tmp_path / "sb"))
     c = TestClient(
@@ -626,10 +626,10 @@ def h_runner_planner_model(client: TestClient) -> Any:
 
 class TestDefaultModel:
     def test_default_model_set_clear_keep(self, tmp_path: Path, monkeypatch) -> None:
-        import agentpulse.api as api_mod
+        import resolve_harness.api as api_mod
 
-        from agentpulse.chat_history import ChatHistoryStore
-        from agentpulse.harness import Harness
+        from resolve_harness.chat_history import ChatHistoryStore
+        from resolve_harness.harness import Harness
 
         cfg = tmp_path / "config.json"
         monkeypatch.setattr(api_mod, "_config_path", lambda: cfg)
@@ -685,10 +685,10 @@ class TestDefaultModel:
 
 class TestModelProfiles:
     def test_profiles_set_resolve_keep(self, tmp_path: Path, monkeypatch) -> None:
-        import agentpulse.api as api_mod
+        import resolve_harness.api as api_mod
 
-        from agentpulse.chat_history import ChatHistoryStore
-        from agentpulse.harness import Harness
+        from resolve_harness.chat_history import ChatHistoryStore
+        from resolve_harness.harness import Harness
 
         cfg = tmp_path / "config.json"
         monkeypatch.setattr(api_mod, "_config_path", lambda: cfg)
@@ -735,10 +735,10 @@ class TestModelProfiles:
         h.close()
 
     def test_env_model_exposed(self, tmp_path: Path, monkeypatch) -> None:
-        import agentpulse.api as api_mod
+        import resolve_harness.api as api_mod
 
-        from agentpulse.chat_history import ChatHistoryStore
-        from agentpulse.harness import Harness
+        from resolve_harness.chat_history import ChatHistoryStore
+        from resolve_harness.harness import Harness
 
         cfg = tmp_path / "config.json"
         monkeypatch.setattr(api_mod, "_config_path", lambda: cfg)

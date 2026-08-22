@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot dev launcher for agentpulse.
+# One-shot dev launcher for resolve_harness.
 #
 # Order matters (and is enforced):
 #   1. kill any leftover processes on :8000 / :5173
@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 node scripts/kill-dev.mjs
 
 echo "[dev] 启动后端 uvicorn :8000 ..."
-uv run uvicorn agentpulse.api:app --reload --port 8000 &
+uv run uvicorn resolve_harness.api:app --reload --port 8000 &
 BACKEND_PID=$!
 
 # wait for the backend to answer before launching the frontend

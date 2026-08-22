@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agentpulse import Harness  # noqa: E402
+from resolve_harness import Harness  # noqa: E402
 
 
 def main() -> None:

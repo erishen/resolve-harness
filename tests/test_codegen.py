@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from agentpulse.codegen import (
+from resolve_harness.codegen import (
     CodeGenError,
     codegen_solve,
     delete_plugin,
@@ -22,9 +22,9 @@ from agentpulse.codegen import (
     save_plugin,
     validate_ast,
 )
-from agentpulse.fastpath import try_fast_answer
-from agentpulse.harness import Harness
-from agentpulse.tasks import TaskRunner
+from resolve_harness.fastpath import try_fast_answer
+from resolve_harness.harness import Harness
+from resolve_harness.tasks import TaskRunner
 
 
 class TestSandboxExecution:
@@ -140,7 +140,7 @@ class TestPersistence:
         assert [d("x") for d in load_plugins(tmp_path)] == ["fine"]
 
     def test_load_plugins_cached_until_change(self, tmp_path) -> None:
-        from agentpulse.codegen import _load_cache
+        from resolve_harness.codegen import _load_cache
 
         (tmp_path / "a.py").write_text("def detect(t):\n    return 'a'", encoding="utf-8")
         first = load_plugins(tmp_path)

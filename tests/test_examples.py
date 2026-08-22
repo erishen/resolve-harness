@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agentpulse.examples import (
+from resolve_harness.examples import (
     BUILTIN_EXAMPLES,
     delete_example,
     generate_examples,
@@ -29,8 +29,8 @@ class _FakeHarness:
 def isolated_deleted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point the tombstone store at a temp file and reset the module cache."""
     target = tmp_path / "deleted_examples.json"
-    monkeypatch.setattr("agentpulse.examples._deleted_file", lambda: target)
-    monkeypatch.setattr("agentpulse.examples._cache", None)
+    monkeypatch.setattr("resolve_harness.examples._deleted_file", lambda: target)
+    monkeypatch.setattr("resolve_harness.examples._cache", None)
     return target
 
 
@@ -156,15 +156,15 @@ class TestFastpathPluginExample:
         assert any(e["label"] == "闰年插件" for e in BUILTIN_EXAMPLES)
 
     def test_falls_through_to_codegen(self, tmp_path) -> None:
-        from agentpulse.fastpath import try_fast_answer
+        from resolve_harness.fastpath import try_fast_answer
 
         ex = next(e for e in BUILTIN_EXAMPLES if e["label"] == "闰年插件")
         # 未加载任何插件时，内置匹配器都不命中 → 任务会进入 codegen 生成检测器
         assert try_fast_answer(ex["text"], plugin_dir=str(tmp_path)) is None
 
     def test_runtime_loads_and_uses_plugin(self, tmp_path) -> None:
-        from agentpulse.codegen import save_plugin
-        from agentpulse.fastpath import try_fast_answer
+        from resolve_harness.codegen import save_plugin
+        from resolve_harness.fastpath import try_fast_answer
 
         plugin = (
             "def detect(text):\n"

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Kill leftover agentpulse dev processes so `make dev` always starts from a
+ * Kill leftover resolve_harness dev processes so `make dev` always starts from a
  * clean slate: anything bound to the backend port :8000 or the Vite port
  * :5173 (uvicorn / vite from previous runs).
  * Cross-platform (macOS / Linux / Windows).

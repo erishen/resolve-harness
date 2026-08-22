@@ -1,4 +1,4 @@
-# agentpulse 多 Agent 编排演示示例
+# resolve_harness 多 Agent 编排演示示例
 
 以下是可直接复制到「任务」tab 的目标文本，覆盖 PSE（Planner → Specialist × N → Evaluator）流程的各种演示场景。目标全部基于内置工具（`add` / `write_file` / `read_file` / `remember` / `recall` / `get_current_time`），不需要外部搜索服务，真实模型即可跑通。
 

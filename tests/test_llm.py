@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from agentpulse.llm import LiteLLMRouter, _extract_usage, usage_diff
+from resolve_harness.llm import LiteLLMRouter, _extract_usage, usage_diff
 
 
 def test_extract_usage_from_usage_object() -> None:

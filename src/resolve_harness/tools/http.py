@@ -23,7 +23,7 @@ import httpx
 
 _DEFAULT_MAX_CHARS = 20000
 _TIMEOUT_SECONDS = 8.0
-_UA = "agentpulse-fetch/0.1"
+_UA = "resolve_harness-fetch/0.1"
 # 下载上限：整响应进内存会 OOM（慢速/巨型 body），流式累积到此即停止。
 _MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024
 # 巨型 JSON 列表精简时保留的记录数。金融/行情类接口（如上期所每日行情

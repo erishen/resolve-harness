@@ -16,13 +16,13 @@ import pytest
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.types import Command
 
-from agentpulse.graph.loop import build_loop
-from agentpulse.harness import Harness
-from agentpulse.tools.registry import ToolRegistry
-from agentpulse.cli import _resolve_approvals
+from resolve_harness.graph.loop import build_loop
+from resolve_harness.harness import Harness
+from resolve_harness.tools.registry import ToolRegistry
+from resolve_harness.cli import _resolve_approvals
 
-import agentpulse.codegen as _codegen  # patched inside make_harness to keep the loop the only driver
-from agentpulse.api import create_app
+import resolve_harness.codegen as _codegen  # patched inside make_harness to keep the loop the only driver
+from resolve_harness.api import create_app
 from fastapi.testclient import TestClient
 
 from test_loop import FakeRouter, SYSTEM, answer, tool_call
@@ -32,7 +32,7 @@ CONFIG = {"configurable": {"thread_id": "test-thread"}}
 
 @pytest.fixture(autouse=True)
 def _restore_codegen_solve():
-    """make_harness stubs agentpulse.codegen.codegen_solve for the duration of
+    """make_harness stubs resolve_harness.codegen.codegen_solve for the duration of
     a test; this fixture guarantees the stub never leaks into other test
     modules (test_codegen.py runs after this one alphabetically)."""
     original = _codegen.codegen_solve
@@ -494,7 +494,7 @@ class TestMemoryHint:
         return h
 
     def test_related_question_injects_snapshot(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr("agentpulse.codegen.codegen_solve", lambda *a, **k: None)
+        monkeypatch.setattr("resolve_harness.codegen.codegen_solve", lambda *a, **k: None)
         h = self._hint_harness(tmp_path)
         router = FakeRouter([answer("根据记忆快照回答。")])
         h.router = router
@@ -513,7 +513,7 @@ class TestMemoryHint:
         h.close()
 
     def test_unrelated_question_no_injection(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr("agentpulse.codegen.codegen_solve", lambda *a, **k: None)
+        monkeypatch.setattr("resolve_harness.codegen.codegen_solve", lambda *a, **k: None)
         h = self._hint_harness(tmp_path)
         router = FakeRouter([answer("多云 25 度。")])
         h.router = router

@@ -1,4 +1,4 @@
-# agentpulse
+# resolve_harness
 
 A minimal Python AI Agent project skeleton: a **LangGraph** orchestration loop, **LiteLLM** unified model routing (Harness), **layered memory**, and a **deterministic fast path** (Fast Path: if it can be computed, the model never should). Dependencies and runtime are managed with `uv`.
 
@@ -6,28 +6,28 @@ The design goal isn't "yet another agent framework" but to **break apart, explai
 
 | Pillar | Location | Responsibility |
 |---|---|---|
-| **Loop** | `src/agentpulse/graph/` | LangGraph StateGraph: `agent → tools → agent…`, with `max_steps` to prevent runaway |
-| **Harness** | `src/agentpulse/harness.py` | Single entry point: assembling config, model routing, tool registry, memory, loop |
-| **Memory** | `src/agentpulse/memory/` | Short-term (session transcript) + long-term (SQLite facts, read/written via tools) |
-| **Fast Path** | `src/agentpulse/fastpath.py` + `codegen.py` | Deterministic queries solved purely in code: a hit means zero model calls; on a miss, ask the model to generate a detector and persist it for reuse |
+| **Loop** | `src/resolve_harness/graph/` | LangGraph StateGraph: `agent → tools → agent…`, with `max_steps` to prevent runaway |
+| **Harness** | `src/resolve_harness/harness.py` | Single entry point: assembling config, model routing, tool registry, memory, loop |
+| **Memory** | `src/resolve_harness/memory/` | Short-term (session transcript) + long-term (SQLite facts, read/written via tools) |
+| **Fast Path** | `src/resolve_harness/fastpath.py` + `codegen.py` | Deterministic queries solved purely in code: a hit means zero model calls; on a miss, ask the model to generate a detector and persist it for reuse |
 
 ## ✨ Core Highlight: the Fast-path Plugin Runtime (model-written · zero-model reuse · promotable into source)
 
-Most "tasks" are actually deterministic — doing arithmetic, converting bases, looking up an exchange rate — and running the LLM repeatedly on them is slow, costly, and error-prone. agentpulse strips that part out entirely with a three-tier fast path, and **the whole process is fully transparent to the UI / memory / orchestration loop** (the task tree still renders normally and is labeled "zero-model"):
+Most "tasks" are actually deterministic — doing arithmetic, converting bases, looking up an exchange rate — and running the LLM repeatedly on them is slow, costly, and error-prone. resolve_harness strips that part out entirely with a three-tier fast path, and **the whole process is fully transparent to the UI / memory / orchestration loop** (the task tree still renders normally and is labeled "zero-model"):
 
 1. **Built-in matchers** (`fastpath.py`): arithmetic / time / unit conversion / date math / base conversion / text stats / index quotes… a hit means pure-code computation, **zero model calls**.
 2. **Codegen (let the model write its own fast path)**: on a miss, the harness asks the model "can this be solved deterministically with a pure Python function"; if so it generates `detect(text) -> str | None`, which — after sandbox validation via an AST whitelist — is **persisted** to `data/fastpath_plugins/`, reused immediately this time, and hit directly next time the same question comes up.
-3. **Promote**: in the "Plugins" tab, select a well-behaved detector and "promote" it — this merges it into `src/agentpulse/generated_detectors.py`, turning it into a built-in detector committed with the source; the runtime copy is then removed.
+3. **Promote**: in the "Plugins" tab, select a well-behaved detector and "promote" it — this merges it into `src/resolve_harness/generated_detectors.py`, turning it into a built-in detector committed with the source; the runtime copy is then removed.
 
 End to end: **develop → persist → reuse → graduate**. Effect: the first time you ask "is 2024 a leap year" the model writes the detector on the spot; afterwards, asking the same kind of question doesn't even call the model. See the "Fast Path" and "Codegen" sections below, plus the promotion notes in the "Plugins" tab.
 
 ## Quick Start
 
 ```bash
-cd work/harness/agentpulse
+cd work/harness/resolve_harness
 cp .env.example .env          # fill in LLM_MODEL / LLM_API_KEY
 uv sync                        # install dependencies (auto-uses the Tsinghua mirror in China)
-uv run agentpulse-chat         # interactive chat (terminal)
+uv run resolve_harness-chat         # interactive chat (terminal)
 ```
 
 The full pipeline runs without a real key: `uv run pytest` drives the loop with a FakeRouter, touching no network.
@@ -63,7 +63,7 @@ Open http://localhost:5173 to use it. There are **eight tabs** in total (Chat is
 - **Tasks** (multi-agent workbench): the top shows example cards (built-in + a "regenerate" button that asks the model to generate a fresh batch of executable examples); built-in examples cover arithmetic / docs / code / web scraping (overseas JD listings, A-share live quotes, USD exchange rate — all via the `fetch` tool); cards can be single-click to fill, double-click to run directly, or hover to delete — deletion is persisted (both built-in and generated can be deleted and won't reappear after refresh), and deleted examples are injected as a "negative list" into the regenerate prompt to stop the model producing similar tasks; after entering a goal, **Planner breaks it into subtasks → Specialists execute one by one (tool loop) → Evaluator accepts** (auto-sent back for replanning on failure, at most 1 round) → **Reporter compiles the deliverable**. Every step (plan / subtask progress / thought / tool call / acceptance conclusion) streams live as a task tree via SSE, and the deliverable supports markdown. If the goal is a deterministic query (e.g. "compute 2+3"), it goes straight through the Fast Path and returns instantly, with the task tree still fully shown and labeled "zero-model".
 - **Chat**: one question one answer; tool calls show as small tags below the reply; deterministic queries also go through Fast Path, no need to wait for the model.
 - **History**: persisted successful tasks (`data/task_history.db`) listed newest-first; click any one to replay the full task tree (plan / subtasks / LangGraph loop graph / tool calls / produced files / deliverable), also supports "save to long-term memory".
-- **Plugins**: manage runtime-generated fast-path plugins — view source, delete individually, or "promote" to merge a well-behaved plugin into `src/agentpulse/generated_detectors.py` as a built-in detector (committed with source).
+- **Plugins**: manage runtime-generated fast-path plugins — view source, delete individually, or "promote" to merge a well-behaved plugin into `src/resolve_harness/generated_detectors.py` as a built-in detector (committed with source).
 - **Tools**: list all tools provided by the project (`GET /api/tools`) — each tool's name, description, parameters (including required), approval flag, and which modes it's available in (chat / task), with filtering by mode.
 - **Agent**: cards for the four task-pipeline roles (Planner / Specialist / Evaluator / Reporter) + an Orchestrator flow SVG (with Fast Path / codegen short-circuit, pass branch and failure-replan loop).
 - **Sandbox**: browse files under `data/sandbox/` (newest on top by modification time), support single delete and clear-all; preview renders by type — markdown rendered as doc, CSV/TSV as table, HTML in iframe, images shown directly, PDF embedded, JSON auto-formatted + syntax highlighted, code (py/js/ts/go/rust…) syntax highlighted, text types can switch back to source edit, plain text keeps source view.
@@ -159,7 +159,7 @@ Planner (break goal into JSON subtask plan)
 
 - Generated code goes through triple protection: AST-whitelist validation (only `re`/`math` imports allowed, no dunder, no class def, no eval/exec, no open, no network) → execution in a restricted-builtins namespace (no I/O) → 3-second hard timeout (thread pool + don't join a runaway worker);
 - On success, persisted by source hash to `data/fastpath_plugins/gen_<sha10>.py` (same source auto-dedupes), hit directly next time, zero model;
-- Plugin management: the Web UI can view source and delete; selecting several and "promoting" merges them into `src/agentpulse/generated_detectors.py` (each function keeps its trigger comment, overall structure is code-generated, function body hand-editable) as built-in detectors, and the runtime copy is removed immediately.
+- Plugin management: the Web UI can view source and delete; selecting several and "promoting" merges them into `src/resolve_harness/generated_detectors.py` (each function keeps its trigger comment, overall structure is code-generated, function body hand-editable) as built-in detectors, and the runtime copy is removed immediately.
 
 ### Memory (`memory/`)
 
@@ -188,7 +188,7 @@ Custom tools: `@h.register_tool(description=...)`, parameter schema auto-derived
 ## Extending: register your own tools
 
 ```python
-from agentpulse import Harness
+from resolve_harness import Harness
 
 h = Harness()
 
@@ -237,7 +237,7 @@ All via environment variables / `.env` (see `.env.example`):
 ## Project Structure
 
 ```
-src/agentpulse/
+src/resolve_harness/
   config.py        Settings (.env → dataclass)
   llm.py           LiteLLMRouter (unified routing + retry + tool_calls parsing)
   harness.py       Harness (public API + fast path/codegen short-circuit + last_trace)

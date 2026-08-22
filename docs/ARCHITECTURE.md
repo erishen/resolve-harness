@@ -1,6 +1,6 @@
-# agentpulse 架构文档
+# resolve_harness 架构文档
 
-> agentpulse 是一个本地优先、单仓可控的 AI Agent Harness：FastAPI + LangGraph + LiteLLM 后端，React/TS 前端。
+> resolve_harness 是一个本地优先、单仓可控的 AI Agent Harness：FastAPI + LangGraph + LiteLLM 后端，React/TS 前端。
 > 核心设计哲学：**能用代码 100% 确定答案的就不调用模型**（Fast Path），复杂度按需升级。
 
 ---
@@ -180,7 +180,7 @@ flowchart TD
 ## 11. 目录结构
 
 ```
-src/agentpulse/
+src/resolve_harness/
   api.py          # FastAPI 应用工厂 + 全部路由
   harness.py      # 组合根：Settings/Router/记忆/工具/Loop
   llm.py          # LiteLLMRouter：模型解析、RetryPolicy、token 计量

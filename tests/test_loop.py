@@ -12,8 +12,8 @@ from typing import Any
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from agentpulse.graph.loop import build_loop
-from agentpulse.tools.registry import ToolRegistry
+from resolve_harness.graph.loop import build_loop
+from resolve_harness.tools.registry import ToolRegistry
 
 SYSTEM = "test system prompt"
 
@@ -210,14 +210,14 @@ class TestHistoryTrim:
     """_trim_history bounds what is sent to the LLM without breaking tool pairing."""
 
     def test_short_history_untouched(self) -> None:
-        from agentpulse.graph.loop import _trim_history
+        from resolve_harness.graph.loop import _trim_history
 
         msgs = [HumanMessage(content=f"q{i}") for i in range(5)]
         out = _trim_history(msgs)
         assert out == msgs  # under the cap: identical list
 
     def test_trims_oldest_beyond_cap(self) -> None:
-        from agentpulse.graph.loop import _trim_history, MAX_LLM_MESSAGES
+        from resolve_harness.graph.loop import _trim_history, MAX_LLM_MESSAGES
 
         msgs = [HumanMessage(content=f"q{i}") for i in range(40)]
         out = _trim_history(msgs)
@@ -229,7 +229,7 @@ class TestHistoryTrim:
     def test_cut_never_lands_on_tool_message(self) -> None:
         """If the cut point falls on a ToolMessage, extend back to its paired
         assistant message so the trimmed history is OpenAI-compatible."""
-        from agentpulse.graph.loop import _trim_history
+        from resolve_harness.graph.loop import _trim_history
 
         # 30 turns of: user -> assistant(tool_call) -> tool(result)
         msgs: list[Any] = []

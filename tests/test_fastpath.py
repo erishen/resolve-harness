@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentpulse.fastpath import try_fast_answer
+from resolve_harness.fastpath import try_fast_answer
 
 
 @pytest.fixture(autouse=True)
@@ -12,7 +12,7 @@ def _isolate_plugins(tmp_path, monkeypatch):
     """Point the plugin dir at a temp (empty) folder so real runtime-generated
     plugins can't leak into these unit tests, and drop promoted source
     detectors too (they may grow to match arbitrary inputs)."""
-    from agentpulse import codegen, fastpath
+    from resolve_harness import codegen, fastpath
 
     monkeypatch.setattr(codegen, "default_plugin_dir", lambda: tmp_path / "empty-plugins")
     monkeypatch.setattr(fastpath, "_GENERATED_DETECTORS", [])

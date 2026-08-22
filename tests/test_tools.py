@@ -5,11 +5,11 @@ from __future__ import annotations
 import contextlib
 import pytest
 
-from agentpulse.memory import LongTermMemory
-from agentpulse.tools import http as http_mod
-from agentpulse.tools.builtin import register_builtins
-import agentpulse.tools.builtin as builtin_mod
-from agentpulse.tools.registry import ToolError, ToolRegistry
+from resolve_harness.memory import LongTermMemory
+from resolve_harness.tools import http as http_mod
+from resolve_harness.tools.builtin import register_builtins
+import resolve_harness.tools.builtin as builtin_mod
+from resolve_harness.tools.registry import ToolError, ToolRegistry
 
 
 class TestRegistry:
@@ -296,7 +296,7 @@ class TestRunScript:
         )
         saved = builtin_mod.RUN_SCRIPT_ALLOWLIST
         builtin_mod.RUN_SCRIPT_ALLOWLIST = frozenset({"demo"})
-        evil = "/tmp/agentpulse_run_script_evil_probe"
+        evil = "/tmp/resolve_harness_run_script_evil_probe"
         if os.path.exists(evil):
             os.remove(evil)
         try:

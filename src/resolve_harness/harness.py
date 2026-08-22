@@ -10,7 +10,7 @@
 
 Typical usage:
 
-    from agentpulse import Harness
+    from resolve_harness import Harness
 
     h = Harness()                      # reads LLM_MODEL / LLM_API_KEY from .env
     print(h.run("What time is it?"))   # may trigger tools under the hood
@@ -503,7 +503,7 @@ def _configure_logging(verbose: bool) -> None:
         level = logging.DEBUG
     else:
         level = logging.INFO
-    root = logging.getLogger("agentpulse")
+    root = logging.getLogger("resolve_harness")
     if not root.handlers:
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("[%(name)s] %(levelname)s %(message)s"))

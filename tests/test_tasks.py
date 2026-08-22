@@ -16,15 +16,15 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from agentpulse.api import create_app
-from agentpulse.harness import Harness
-from agentpulse.tasks import TaskRecord, TaskRunner
+from resolve_harness.api import create_app
+from resolve_harness.harness import Harness
+from resolve_harness.tasks import TaskRecord, TaskRunner
 
 # TaskRunner 的历史库与沙箱：每个测试用 tmp_path 隔离，杜绝跨测试/跨用户的
 # /tmp 污染（pytest 的 tmp_path 按测试唯一，且自动清理）。默认值仅在未触发
 # autouse fixture 的极少数场景兜底。
-_SHARED_HISTORY = Path("/tmp/agentpulse-task-hist-test.db")
-_SANDBOX = "/tmp/agentpulse-sandbox-test"
+_SHARED_HISTORY = Path("/tmp/resolve_harness-task-hist-test.db")
+_SANDBOX = "/tmp/resolve_harness-sandbox-test"
 
 
 @pytest.fixture(autouse=True)

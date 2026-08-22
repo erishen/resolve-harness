@@ -1,4 +1,4 @@
-"""FastAPI layer exposing the agentpulse harness over HTTP.
+"""FastAPI layer exposing the resolve_harness harness over HTTP.
 
 This is the thin "web harness": it holds one Harness instance per process,
 accepts chat turns, and returns the reply plus a per-turn tool trace and the
@@ -6,7 +6,7 @@ session transcript, so a frontend can render the agent's internal steps.
 Task mode (TaskRunner) streams every inner step over SSE.
 
 Run (dev):
-    uv run uvicorn agentpulse.api:app --reload --port 8000
+    uv run uvicorn resolve_harness.api:app --reload --port 8000
 
 Endpoints:
     GET  /api/health                 -> service info
@@ -248,7 +248,7 @@ def create_app(
 ) -> FastAPI:
     """App factory; allows tests to inject a harness/runner with fakes."""
     h = harness or Harness()
-    app = FastAPI(title="agentpulse", version="0.2.0")
+    app = FastAPI(title="resolve_harness", version="0.2.0")
     app.state.harness = h
     app.state.runner = runner or TaskRunner(h)
     # .env LLM_MODEL baseline — clearing a default_model override falls back here
@@ -690,7 +690,7 @@ def _register_plugin_routes(app: FastAPI) -> None:
             promoted = promote_plugins(req.names)
         except CodeGenError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"ok": True, "promoted": promoted, "file": "src/agentpulse/generated_detectors.py"}
+        return {"ok": True, "promoted": promoted, "file": "src/resolve_harness/generated_detectors.py"}
 
     @app.get("/api/examples")
     def examples() -> dict[str, Any]:

@@ -1,5 +1,5 @@
 # ===========================================================================
-# agentpulse — developer task runner
+# resolve_harness — developer task runner
 #
 #   make            # show this help
 #   make install    # install Python deps (incl. dev)
@@ -37,7 +37,7 @@ test: ## 运行离线单元测试（不需要 API key）
 	$(UV) run pytest
 
 chat: ## 交互式对话（REPL）
-	$(UV) run agentpulse-chat
+	$(UV) run resolve_harness-chat
 
 demo: ## 脚本演示：时间 / 计算 / 记忆
 	$(UV) run python examples/tool_demo.py
@@ -46,7 +46,7 @@ dev: ## 一键启动前后端：先清理 :8000/:5173 残留，后端先起、�
 	@bash scripts/dev.sh
 
 api: ## 启动 FastAPI 后端（http://127.0.0.1:8000，文档 /docs）
-	$(UV) run uvicorn agentpulse.api:app --reload --port 8000
+	$(UV) run uvicorn resolve_harness.api:app --reload --port 8000
 
 web-dev: ## 启动 Vite 前端（http://localhost:5173，需先 pnpm install）
 	cd web && $(PNPM) dev

@@ -1,4 +1,4 @@
-"""Interactive REPL chat with the agentpulse harness.
+"""Interactive REPL chat with the resolve_harness harness.
 
 Usage:
     uv run python examples/chat.py
@@ -14,12 +14,12 @@ from pathlib import Path
 # allow `uv run python examples/chat.py` without installing the package
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agentpulse import Harness  # noqa: E402
+from resolve_harness import Harness  # noqa: E402
 
 
 def main() -> None:
     harness = Harness()
-    print(f"agentpulse v0.1.0 — model: {harness.settings.model}")
+    print(f"resolve_harness v0.1.0 — model: {harness.settings.model}")
     print("Type your message, or 'exit' / Ctrl-D to quit.\n")
 
     try:

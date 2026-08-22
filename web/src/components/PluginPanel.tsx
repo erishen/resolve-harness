@@ -89,7 +89,7 @@ export default function PluginPanel() {
           <div className="plugin-title">Fast-path 插件（运行时 + 内置）</div>
           <div className="plugin-sub">
             内置核心 = fastpath.py 自带匹配器（只读）；内置晋升 = 已晋升进源码的检测器（只读）；
-            运行时 = Agent 生成的检测器，勾选后「晋升到源码」可合并写回 src/agentpulse/generated_detectors.py。
+            运行时 = Agent 生成的检测器，勾选后「晋升到源码」可合并写回 src/resolve_harness/generated_detectors.py。
           </div>
         </div>
         <div className="plugin-actions">

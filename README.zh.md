@@ -1,4 +1,4 @@
-# agentpulse
+# resolve_harness
 
 一个极简的 Python AI Agent 项目骨架：**LangGraph** 编排循环（Loop）、**LiteLLM** 统一模型路由（Harness）、**分层记忆**（Memory）、**确定性快路径**（Fast Path：能算的绝不让模型算）。用 `uv` 管理依赖与运行环境。
 
@@ -6,28 +6,28 @@
 
 | 支柱 | 位置 | 职责 |
 |---|---|---|
-| **Loop** | `src/agentpulse/graph/` | LangGraph StateGraph：`agent → tools → agent…`，带 `max_steps` 防失控 |
-| **Harness** | `src/agentpulse/harness.py` | 唯一入口：组装配置、模型路由、工具注册表、记忆、循环 |
-| **Memory** | `src/agentpulse/memory/` | 短期（会话转录）+ 长期（SQLite 事实，经工具读写） |
-| **Fast Path** | `src/agentpulse/fastpath.py` + `codegen.py` | 确定性查询纯代码解决：命中即零模型；未命中时让模型生成检测器并持久化复用 |
+| **Loop** | `src/resolve_harness/graph/` | LangGraph StateGraph：`agent → tools → agent…`，带 `max_steps` 防失控 |
+| **Harness** | `src/resolve_harness/harness.py` | 唯一入口：组装配置、模型路由、工具注册表、记忆、循环 |
+| **Memory** | `src/resolve_harness/memory/` | 短期（会话转录）+ 长期（SQLite 事实，经工具读写） |
+| **Fast Path** | `src/resolve_harness/fastpath.py` + `codegen.py` | 确定性查询纯代码解决：命中即零模型；未命中时让模型生成检测器并持久化复用 |
 
 ## ✨ 核心亮点：Fast-path 插件运行时（模型自写 · 零模型复用 · 可晋升进源码）
 
-大多数"任务"其实是确定性的——算个账、转个进制、查个汇率——让 LLM 反复跑既慢又贵还易错。agentpulse 用三层快路径把这部分彻底拿掉，且**整个过程对 UI / 记忆 / 编排循环完全透明**（任务树照常展示，并标注"零模型"）：
+大多数"任务"其实是确定性的——算个账、转个进制、查个汇率——让 LLM 反复跑既慢又贵还易错。resolve_harness 用三层快路径把这部分彻底拿掉，且**整个过程对 UI / 记忆 / 编排循环完全透明**（任务树照常展示，并标注"零模型"）：
 
 1. **内置匹配器**（`fastpath.py`）：算术 / 时间 / 单位换算 / 日期 / 进制 / 文本统计 / 指数行情……命中即纯代码直算，**零模型调用**。
 2. **Codegen（让模型写自己的快路径）**：未命中时，harness 问模型"这问题能否用纯 Python 函数确定性解决"；能则生成 `detect(text) -> str | None`，经 AST 白名单沙箱校验后**持久化**到 `data/fastpath_plugins/`，本次立即复用，下次同题直接命中。
-3. **晋升（promote）**：在「插件」Tab 选中表现好的检测器，「晋升」即合并进 `src/agentpulse/generated_detectors.py`，成为随源码提交的内置检测器，运行时副本随即清理。
+3. **晋升（promote）**：在「插件」Tab 选中表现好的检测器，「晋升」即合并进 `src/resolve_harness/generated_detectors.py`，成为随源码提交的内置检测器，运行时副本随即清理。
 
 一条龙：**开发 → 持久化 → 复用 → 转正**。效果：第一次问"2024 是闰年吗"模型现写检测器；之后再问同类问题，连模型都不用调。详见下方「Fast Path」与「Codegen」两节，以及「插件」Tab 的晋升说明。
 
 ## 快速开始
 
 ```bash
-cd work/harness/agentpulse
+cd work/harness/resolve_harness
 cp .env.example .env          # 填 LLM_MODEL / LLM_API_KEY
 uv sync                        # 安装依赖（国内自动走清华镜像）
-uv run agentpulse-chat         # 交互式对话（终端）
+uv run resolve_harness-chat         # 交互式对话（终端）
 ```
 
 不带真实 key 也能跑通全链路：`uv run pytest` 用 FakeRouter 驱动循环，不碰网络。
@@ -63,7 +63,7 @@ make web-dev
 - **任务**（多 Agent 工作台）：顶部是示例卡片（内置 + 「重新生成」按钮让模型生成一批新的、可执行的示例），内置示例覆盖计算 / 文档 / 代码 / 联网抓取（海外 JD 列表、A 股实时行情、美元汇率，均走 fetch 工具）等类型；卡片可单击填入、双击直接运行，也可 hover 删除——删除会持久化（内置/生成都能删，刷新后不再出现），且已删示例会作为「负面清单」注入重新生成的 prompt，避免模型再产出类似任务；输入一个目标后，**Planner 拆解子任务 → Specialist 逐个执行（工具循环）→ Evaluator 验收**（不达标自动打回重规划，最多 1 轮）→ **Reporter 汇成交付**。每一步（计划 / 子任务进度 / 思考 / 工具调用 / 验收结论）通过 SSE 实时流式显示为任务树，交付支持 markdown。若目标是确定性查询（如「计算 2+3」），会直接走 Fast Path 秒回，任务树依然完整展示并标注「零模型」。
 - **聊天**：一问一答，工具调用以回复下方的小标签展示；确定性查询同样走 Fast Path，无需等模型。
 - **历史**：已持久化的成功任务（`data/task_history.db`）按时间倒序列出，点击任意一条回看完整任务树（计划 / 子任务 / LangGraph 循环图 / 工具调用 / 产出文件 / 交付），同样支持「存入长期记忆」。
-- **插件**：管理运行时生成的 fast-path 插件——查看源码、单个删除，或「晋升」把表现好的插件合并进 `src/agentpulse/generated_detectors.py` 成为内置检测器（随源码提交）。
+- **插件**：管理运行时生成的 fast-path 插件——查看源码、单个删除，或「晋升」把表现好的插件合并进 `src/resolve_harness/generated_detectors.py` 成为内置检测器（随源码提交）。
 - **工具**：列出项目提供的全部工具（`GET /api/tools`）——每个工具的名称、描述、参数（含必填）、审批标记，以及它在哪些模式可用（聊天 / 任务），支持按模式过滤。
 - **Agent**：任务流水线的四个角色（Planner / Specialist / Evaluator / Reporter）卡片 + Orchestrator 流程 SVG 图（含 Fast Path / codegen 短路、达标分支与失败重规划回环）。
 - **沙箱**：浏览 `data/sandbox/` 下的文件（按修改时间倒序，最新在最上），支持单个删除、一键清空；预览按类型渲染——markdown 渲染成文档、CSV/TSV 渲染成表格、HTML 在 iframe 中展示、图片直接显示、PDF 内嵌查看、JSON 自动格式化 + 语法高亮、代码（py/js/ts/go/rust…）语法高亮，文本类均可切回源码编辑，纯文本保持源码视图。
@@ -158,7 +158,7 @@ Planner(拆解目标为 JSON 子任务计划)
 - 快路径未命中时，harness 问模型能否用纯 Python 函数确定性解决；能则生成 `detect(text) -> str | None`；
 - 生成代码经过三重防护：AST 白名单校验（仅允许 `re`/`math` 的 import，禁 dunder、类定义、eval/exec、open、网络等）→ 受限 builtins 命名空间执行（无 I/O）→ 3 秒硬超时（线程池 + 不 join 失控 worker）；
 - 成功后按源码哈希持久化为 `data/fastpath_plugins/gen_<sha10>.py`（相同源码自动去重），下次同样问题直接命中、零模型；
-- 插件管理：Web UI 可查看源码、删除；选中多个可「晋升」，合并进 `src/agentpulse/generated_detectors.py`（每个函数保留 trigger 注释，整体结构由代码生成，函数体可手改）成为内置检测器，运行时副本随即移除。
+- 插件管理：Web UI 可查看源码、删除；选中多个可「晋升」，合并进 `src/resolve_harness/generated_detectors.py`（每个函数保留 trigger 注释，整体结构由代码生成，函数体可手改）成为内置检测器，运行时副本随即移除。
 
 ### Memory（`memory/`）
 
@@ -187,7 +187,7 @@ Planner(拆解目标为 JSON 子任务计划)
 ## 扩展：注册自己的工具
 
 ```python
-from agentpulse import Harness
+from resolve_harness import Harness
 
 h = Harness()
 
@@ -236,7 +236,7 @@ print(h.run("上海今天天气怎么样？"))
 ## 项目结构
 
 ```
-src/agentpulse/
+src/resolve_harness/
   config.py        Settings（.env → dataclass）
   llm.py           LiteLLMRouter（统一路由 + 重试 + tool_calls 解析）
   harness.py       Harness（对外 API + fast path/codegen 短路 + last_trace）

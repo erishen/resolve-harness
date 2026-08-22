@@ -15,7 +15,7 @@ def _isolate_chat_history(
     so a DB file inside it would show up as a sandbox file."""
     db_dir = tmp_path_factory.mktemp("chat_hist")
     monkeypatch.setattr(
-        "agentpulse.chat_history.default_chat_history_path",
+        "resolve_harness.chat_history.default_chat_history_path",
         lambda: db_dir / "chat_history.db",
     )
 
@@ -33,7 +33,7 @@ def _isolate_runtime_config(
     _config_path themselves and override this."""
     cfg_dir = tmp_path_factory.mktemp("runtime_cfg")
     monkeypatch.setattr(
-        "agentpulse.api._config_path",
+        "resolve_harness.api._config_path",
         lambda: cfg_dir / "config.json",
     )
 
@@ -49,7 +49,7 @@ def _isolate_event_log(
     so turn/task events never pollute (or are read from) the developer's log."""
     log_dir = tmp_path_factory.mktemp("event_log")
     monkeypatch.setattr(
-        "agentpulse.event_log.default_event_log_path",
+        "resolve_harness.event_log.default_event_log_path",
         lambda: log_dir / "event_log.db",
     )
 
@@ -65,7 +65,7 @@ def _isolate_task_history(
     the chat-history / event-log isolation already in place."""
     hist_dir = tmp_path_factory.mktemp("task_hist")
     monkeypatch.setattr(
-        "agentpulse.tasks.default_history_path",
+        "resolve_harness.tasks.default_history_path",
         lambda: hist_dir / "task_history.db",
     )
 

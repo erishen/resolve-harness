@@ -256,7 +256,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
   // 任务模板选择记忆：切 Tab 回来不丢（用户上次选的模板/参数）
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem('agentpulse_task_param')
+      const raw = sessionStorage.getItem('resolve_harness_task_param')
       if (raw) {
         const p = JSON.parse(raw) as { key: string | null; value: string }
         if (typeof p.key === 'string' || p.key === null) setParamKey(p.key)
@@ -270,7 +270,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
 
   useEffect(() => {
     sessionStorage.setItem(
-      'agentpulse_task_param',
+      'resolve_harness_task_param',
       JSON.stringify({ key: paramKey, value: paramValue }),
     )
   }, [paramKey, paramValue])
@@ -536,7 +536,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
     try {
       const { task_id } = await api.createTask(goal)
       // 记录当前运行任务：切 Tab 再切回时据此恢复进度
-      sessionStorage.setItem('agentpulse_live_task', task_id)
+      sessionStorage.setItem('resolve_harness_live_task', task_id)
       const es = new EventSource(`/api/tasks/${task_id}/stream`)
       esRef.current = es
       es.onmessage = (msg) => {
@@ -553,7 +553,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
           flushPending()
           setState(ev.type === 'task_end' ? 'done' : 'stopped')
           onMemoryChange?.()
-          sessionStorage.removeItem('agentpulse_live_task')
+          sessionStorage.removeItem('resolve_harness_live_task')
           es.close()
           esRef.current = null
         } else if (ev.type === 'error') {
@@ -562,7 +562,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
           setError(String(ev.data.message ?? 'task failed'))
           setState('error')
           onMemoryChange?.()
-          sessionStorage.removeItem('agentpulse_live_task')
+          sessionStorage.removeItem('resolve_harness_live_task')
           es.close()
           esRef.current = null
         } else {
@@ -579,14 +579,14 @@ export default function TaskPanel({ onMemoryChange }: Props) {
   }
 
   const stop = useCallback(() => {
-    const tid = sessionStorage.getItem('agentpulse_live_task')
+    const tid = sessionStorage.getItem('resolve_harness_live_task')
     if (tid) {
       // 通知后端真正中止任务（best-effort：无法取消已在进行的同步 LLM 调用）
       void api.stopTask(tid).catch(() => {})
     }
     esRef.current?.close()
     esRef.current = null
-    sessionStorage.removeItem('agentpulse_live_task')
+    sessionStorage.removeItem('resolve_harness_live_task')
     setState((s) => (s === 'running' ? 'stopped' : s))
   }, [])
 
@@ -594,7 +594,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
   // 后端 subscribe 会补发全部历史事件再流式推送实时事件，因此无论任务是
   // 仍在运行还是已结束，切回都能拿到完整视图。
   useEffect(() => {
-    const tid = sessionStorage.getItem('agentpulse_live_task')
+    const tid = sessionStorage.getItem('resolve_harness_live_task')
     if (!tid) return
     let received = false
     const es = new EventSource(`/api/tasks/${tid}/stream`)
@@ -616,7 +616,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
         pushEvent(ev)
         flushPending()
         setState('done')
-        sessionStorage.removeItem('agentpulse_live_task')
+        sessionStorage.removeItem('resolve_harness_live_task')
         es.close()
         esRef.current = null
       } else if (ev.type === 'error') {
@@ -624,7 +624,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
         flushPending()
         setError(String(ev.data.message ?? 'task failed'))
         setState('error')
-        sessionStorage.removeItem('agentpulse_live_task')
+        sessionStorage.removeItem('resolve_harness_live_task')
         es.close()
         esRef.current = null
       } else {
@@ -636,7 +636,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
         // 初始连接即失败（任务已被清理 / 后端重启）：放弃恢复
         es.close()
         esRef.current = null
-        sessionStorage.removeItem('agentpulse_live_task')
+        sessionStorage.removeItem('resolve_harness_live_task')
       }
     }
     // SSE 连接与缓冲由既有的卸载 cleanup 统一关闭/flush

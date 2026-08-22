@@ -1,4 +1,4 @@
-# agentpulse 开发 TODO
+# resolve_harness 开发 TODO
 
 > 项目待办与规划。完成项请勾选 `[x]` 并保留，便于追溯。
 > 维护原则：每条尽量标注落点（相关模块/文件），保持可执行。
@@ -7,7 +7,7 @@
 
 - [ ] **泛化「确定性脚本」模式**：把 `run_script` 白名单扩展到联网/计算类示例（行情、汇率、换算等），
       让这类任务优先走「脚本直算」而非「模型拼 URL」，从根上消除幻觉。
-      落点：`src/agentpulse/tools/builtin.py`（`RUN_SCRIPT_ALLOWLIST`）、`scripts/`、`examples.py`。
+      落点：`src/resolve_harness/tools/builtin.py`（`RUN_SCRIPT_ALLOWLIST`）、`scripts/`、`examples.py`。
 - [ ] **关键任务轻量自校验**：对关键产出做非空 / 含真实数据校验（如 `futures.md` 是否含 SHFE 行），
       校验失败触发重跑而非直接交付。落点：`graph/loop.py`（`_compose_deliverable`）。
 - [ ] **Evaluator 失败重规划轮数可配置**：现硬编码 1 轮（`graph/loop.py` `re_plan` 分支），

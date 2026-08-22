@@ -53,7 +53,7 @@ export default function App() {
 
   // 长期记忆栏宽度（左拉可扩展），持久化到 localStorage，范围 200–720px
   const [sidebarW, setSidebarW] = useState<number>(() => {
-    const saved = Number(localStorage.getItem('agentpulse.sidebarW'))
+    const saved = Number(localStorage.getItem('resolve_harness.sidebarW'))
     return saved >= 200 && saved <= 720 ? saved : 280
   })
   const sidebarWRef = useRef(sidebarW)
@@ -74,7 +74,7 @@ export default function App() {
       sidebarDraggingRef.current = false
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
-      localStorage.setItem('agentpulse.sidebarW', String(sidebarWRef.current))
+      localStorage.setItem('resolve_harness.sidebarW', String(sidebarWRef.current))
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
@@ -147,7 +147,7 @@ export default function App() {
       <section className="chat">
         <header className="chat-header">
           <span className={`status-dot ${online ? 'online' : ''}`} />
-          <span className="title">agentpulse</span>
+          <span className="title">resolve_harness</span>
           <span className="subtitle">
             {online ? '已连接' : '后端离线 — 请运行 `make dev`'}
           </span>

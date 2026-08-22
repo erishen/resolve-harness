@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from agentpulse.event_log import EventLog
+from resolve_harness.event_log import EventLog
 
 
 @pytest.fixture()
