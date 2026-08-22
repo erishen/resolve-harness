@@ -216,7 +216,7 @@ export default function App() {
         ) : mode === 'task' ? (
           <TaskPanel onMemoryChange={() => void loadMemories()} />
         ) : mode === 'history' ? (
-          <HistoryPanel />
+          <HistoryPanel onMemoryChange={() => void loadMemories()} />
         ) : mode === 'audit' ? (
           <AuditPanel />
         ) : mode === 'tools' ? (

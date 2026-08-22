@@ -51,7 +51,7 @@ function lastTaskEnd(events: TaskEvent[]): string {
   return ''
 }
 
-export default function HistoryPanel() {
+export default function HistoryPanel({ onMemoryChange }: { onMemoryChange?: () => void }) {
   const [tasks, setTasks] = useState<TaskSnapshot[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [preview, setPreview] = useState<{ name: string; path: string; fallback: string } | null>(null)
@@ -132,6 +132,7 @@ export default function HistoryPanel() {
       await api.addMemory(key, `[${fmtNow()}] ${mdToText(body).slice(0, 500)}`)
       setSaveOpen(false)
       setSaveMsg('✅ 已存入长期记忆（带保存时间）')
+      onMemoryChange?.() // 刷新左侧长期记忆栏
     } catch (e) {
       setSaveMsg(`存入失败：${e instanceof Error ? e.message : String(e)}`)
     }

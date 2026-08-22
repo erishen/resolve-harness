@@ -184,6 +184,7 @@ export default function ChatPanel({ onAfterTurn }: Props) {
       try {
         await api.addMemory(`chat:${Date.now()}`, content)
         setSavedSet((s) => new Set(s).add(id))
+        onAfterTurn?.() // 刷新左侧长期记忆栏
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       }
