@@ -22,6 +22,20 @@ type Mode =
   | 'sandbox'
   | 'settings'
 
+// 记住当前所在 Tab：刷新后停留在原页面（localStorage 持久化）
+const MODES: Mode[] = [
+  'chat',
+  'task',
+  'history',
+  'audit',
+  'plugins',
+  'tools',
+  'agents',
+  'sandbox',
+  'settings',
+]
+const MODE_KEY = 'resolve_harness.mode'
+
 /** 工具 Tab 的外部初始过滤（Agent Tab 点击 Specialist 时锁定"任务"）。 */
 type ToolsFilter = 'all' | 'chat' | 'task' | 'approval'
 
@@ -119,7 +133,16 @@ function TokenGate() {
 }
 
 export default function App() {
-  const [mode, setMode] = useState<Mode>('chat')
+  const [mode, setMode] = useState<Mode>(() => {
+    // 初始化时恢复上次所在 Tab；无效值（改版后残留）回退聊天页
+    const saved = localStorage.getItem(MODE_KEY) as Mode | null
+    return saved && MODES.includes(saved) ? saved : 'chat'
+  })
+
+  // Tab 切换即持久化，刷新后恢复
+  useEffect(() => {
+    localStorage.setItem(MODE_KEY, mode)
+  }, [mode])
   const [toolsFilter, setToolsFilter] = useState<ToolsFilter>('all')
   const [memories, setMemories] = useState<MemoryRow[]>([])
   const [online, setOnline] = useState(false)
