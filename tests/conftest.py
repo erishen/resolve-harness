@@ -88,5 +88,7 @@ def _isolate_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
         "LLM_MAX_STEPS",
         "HARNESS_VERBOSE",
         "HARNESS_LOG_LEVEL",
+        # 开发者 .env 配了 API_TOKEN 会让所有 create_app 测试变 401
+        "API_TOKEN",
     ):
         monkeypatch.delenv(var, raising=False)

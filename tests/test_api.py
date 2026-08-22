@@ -71,12 +71,6 @@ def _isolate_deleted_examples(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr("resolve_harness.examples._cache", None)
 
 
-@pytest.fixture(autouse=True)
-def _no_api_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    """开发者真实 .env 里若配了 API_TOKEN，不能让全部 API 测试变 401。"""
-    monkeypatch.delenv("API_TOKEN", raising=False)
-
-
 class TestApi:
     def test_health(self, client: TestClient) -> None:
         res = client.get("/api/health")
