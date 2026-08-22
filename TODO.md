@@ -77,6 +77,18 @@
 
 ## 近期已完成（本周期）
 
+> 隐私/数据安全专项（两轮扫描）：
+> 🔴→✅ **沙箱「原有文件」保护**：清空只删 Agent 创建的文件，切换前已存在的文件默认隐藏
+> （`_sandbox_baseline` 快照 + config 锚定持久化；防「沙箱指向 ~/Desktop 后清空」灾难）。`harness.py` / `api.py` / `SandboxPanel.tsx`
+> 🔴→✅ **前端渲染消毒**：markdown/代码高亮全部经 DOMPurify，预览 iframe 加 `sandbox=""`。
+> 攻击链：fetch 网页注入 → 模型回显 → 同源 XSS → 读 /api/* 外传。`web/src/safeHtml.ts`
+> 🟠→✅ **run_script 子进程最小环境**：白名单透传 PATH/证书变量，API key 不再进入子进程。`tools/builtin.py`
+> 🟡→✅ **verbose 日志截断工具参数**（300 字符），文件内容不再全量进日志。`graph/loop.py`
+> 已确认无泄漏：路径穿越拦截、密钥只回 env 变量名、provider 报错脱敏、无 prompt 日志、localStorage 仅存布局。
+>
+> 遗留（接受/待定）：① 全接口无鉴权——仅 CORS 限 localhost，若部署到非本机需先加 token；
+> ② 聊天历史/事件日志/长期记忆明文 SQLite（本地单用户可接受；事件 payload >16KB 已截断存 preview）。
+
 - [x] **安全：codegen 沙箱补 `format_map` 拦截**，堵住「字符串字面量藏 dunder 遍历」旁路。
       `codegen.py:85`（回归测试 `test_format_map_dunder_bypass_rejected`）。
 - [x] **安全：`run_script` 强制沙箱内落盘**，丢弃模型传入的 `--out` 绝对/越界路径；
