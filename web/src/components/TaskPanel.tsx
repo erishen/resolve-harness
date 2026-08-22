@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { marked } from 'marked'
-import hljs from 'highlight.js'
 import { api, type AppConfig } from '../api'
+import { safeMarkdown, safeHighlight } from '../safeHtml'
 import { fmtNum, fmtUsage } from '../types'
 import type { Subtask, TaskEvent, UsageInfo } from '../types'
 
@@ -1051,7 +1050,7 @@ export function GroupedCard({ item }: { item: GroupedItem }) {
           </div>
           <div
             className="step-markdown"
-            dangerouslySetInnerHTML={{ __html: marked.parse(item.reply) }}
+            dangerouslySetInnerHTML={{ __html: safeMarkdown(item.reply) }}
           />
         </div>
       )
@@ -1315,23 +1314,20 @@ export function FilePreviewModal({
               }}
             />
           ) : kind === 'pdf' ? (
-            <iframe src={api.sandboxRawUrl(path)} title={name} />
+            <iframe src={api.sandboxRawUrl(path)} title={name} sandbox="" />
           ) : content === null ? (
             <div className="file-modal-loading">加载中…</div>
           ) : kind === 'markdown' ? (
             <div
               className="step-markdown"
-              dangerouslySetInnerHTML={{ __html: marked.parse(content) }}
+              dangerouslySetInnerHTML={{ __html: safeMarkdown(content) }}
             />
           ) : kind === 'json' ? (
             <pre className="sandbox-highlight" style={{ margin: 0, maxHeight: '62vh' }}>
               <code
                 className="hljs"
                 dangerouslySetInnerHTML={{
-                  __html: hljs.highlight(prettyJson(content), {
-                    language: 'json',
-                    ignoreIllegals: true,
-                  }).value,
+                  __html: safeHighlight(prettyJson(content), 'json'),
                 }}
               />
             </pre>

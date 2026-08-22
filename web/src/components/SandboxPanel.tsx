@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { marked } from 'marked'
-import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 import { api } from '../api'
+import { safeMarkdown, safeHighlight } from '../safeHtml'
 import type { SandboxFile } from '../types'
 
 function formatSize(bytes: number): string {
@@ -78,19 +77,10 @@ function prettyJson(text: string): string {
   }
 }
 
-/** Syntax-highlight a code/JSON snippet via highlight.js. */
-function highlightCode(code: string, language: string): string {
-  try {
-    return hljs.highlight(code, { language, ignoreIllegals: true }).value
-  } catch {
-    return hljs.highlightAuto(code).value
-  }
-}
-
-/** Source view for json/code kinds: pretty-print JSON, then highlight. */
+/** Source view for json/code kinds: pretty-print JSON, then highlight + sanitize. */
 function sourceHtml(file: SandboxFile, text: string): string {
   const code = file.kind === 'json' ? prettyJson(text) : text
-  return highlightCode(code, languageFor(file.path, file.kind))
+  return safeHighlight(code, languageFor(file.path, file.kind))
 }
 
 /** Dead-simple CSV/TSV parser — good enough for a preview table. */
@@ -468,6 +458,7 @@ export default function SandboxPanel() {
                 className="sandbox-iframe"
                 src={api.sandboxRawUrl(selected.path)}
                 title={selected.path}
+                sandbox=""
               />
             </div>
           )}
@@ -501,7 +492,7 @@ export default function SandboxPanel() {
               ) : previewing && selected.kind === 'markdown' ? (
                 <div
                   className="step-markdown sandbox-markdown"
-                  dangerouslySetInnerHTML={{ __html: marked.parse(content) }}
+                  dangerouslySetInnerHTML={{ __html: safeMarkdown(content) }}
                 />
               ) : previewing && selected.kind === 'html' ? (
                 <iframe
@@ -509,6 +500,7 @@ export default function SandboxPanel() {
                   className="sandbox-iframe"
                   src={api.sandboxRawUrl(selected.path)}
                   title={selected.path}
+                  sandbox=""
                 />
               ) : previewing && selected.kind === 'csv' ? (
                 <div className="sandbox-table-wrap">
