@@ -52,12 +52,38 @@ function displayValue(value: unknown): string {
 function TokenGate() {
   const [show, setShow] = useState(false)
   const [value, setValue] = useState('')
+  const [checking, setChecking] = useState(false)
+  const [bad, setBad] = useState(false)
 
   useEffect(() => {
     const onUnauthorized = () => setShow(true)
     window.addEventListener('rh:unauthorized', onUnauthorized)
     return () => window.removeEventListener('rh:unauthorized', onUnauthorized)
   }, [])
+
+  // 先拿候选 Token 实际打一次接口验证，通过才落盘 + 刷新；
+  // 输错当场提示，避免「保存→刷新→依旧 401」的静默失败循环。
+  const submit = async () => {
+    const t = value.trim()
+    if (!t || checking) return
+    setChecking(true)
+    setBad(false)
+    try {
+      const res = await fetch('/api/state', {
+        headers: { Authorization: `Bearer ${t}` },
+      })
+      if (res.ok) {
+        setApiToken(t)
+        window.location.reload()
+        return
+      }
+      setBad(true)
+    } catch {
+      setBad(true)
+    } finally {
+      setChecking(false)
+    }
+  }
 
   if (!show) return null
   return (
@@ -71,26 +97,18 @@ function TokenGate() {
         autoFocus
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && value.trim()) {
-            setApiToken(value)
-            window.location.reload()
-          }
+          if (e.key === 'Enter') void submit()
         }}
       />
-      <button
-        type="button"
-        className="token-gate-btn primary"
-        disabled={!value.trim()}
-        onClick={() => {
-          setApiToken(value)
-          window.location.reload()
-        }}
-      >
-        保存并刷新
+      <button type="button" className="token-gate-btn primary" disabled={!value.trim() || checking} onClick={() => void submit()}>
+        {checking ? '验证中…' : '验证并保存'}
       </button>
       <button type="button" className="token-gate-btn" onClick={() => setShow(false)}>
         稍后在设置里填
       </button>
+      {bad && (
+        <span className="token-gate-error">❌ Token 不正确：需与后端 .env 的 API_TOKEN 完全一致</span>
+      )}
     </div>
   )
 }

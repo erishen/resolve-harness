@@ -3461,3 +3461,9 @@ body {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+.token-gate-error {
+  font-size: 12px;
+  color: #ff8a8a;
+  white-space: nowrap;
+}
