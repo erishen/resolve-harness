@@ -235,6 +235,7 @@ export default function SandboxPanel() {
 
   // 快捷目录：后端 set_sandbox_dir 已支持 ~ 展开与绝对化；「项目沙箱」发送哨兵复位默认。
   const QUICK_DIRS: { label: string; path: string }[] = [
+    { label: 'ResolveHarness', path: '~/ResolveHarness' },
     { label: '桌面', path: '~/Desktop' },
     { label: '下载', path: '~/Downloads' },
     { label: '文稿', path: '~/Documents' },
