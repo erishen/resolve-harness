@@ -63,11 +63,19 @@ _RETRYABLE_EXC = (
 
 
 def _retry_wait(exc: Exception, attempt: int, policy: "RetryPolicy") -> float:
-    """退避时长：优先采用上游给出的 retry_after（如 Cloudflare 520 的 60s），
-    clamp 到 [backoff_base, 15s] 避免单次等待卡死；否则指数退避。"""
+    """退避时长：优先采用上游给出的 retry 建议（如 Cloudflare 520 的 60s、
+    OpenRouter 429 的 Retry-After 头 / retry_after_seconds 字段），clamp 到
+    [backoff_base, 15s] 避免单次等待卡死；否则指数退避。"""
     ra = getattr(exc, "retry_after", None)
+    if ra is None and getattr(exc, "response", None) is not None:
+        # litellm 的 RateLimitError 可能把 Retry-After 放在响应头里。
+        hdr = getattr(exc.response, "headers", None)
+        if hdr is not None:
+            ra = hdr.get("Retry-After") or hdr.get("retry-after")
     if ra is None:
-        m = re.search(r"retry_after['\"]?\s*[:=]\s*(\d+)", str(exc))
+        # OpenRouter 把建议等待写在 JSON 的 retry_after_seconds /
+        # retry_after_seconds_raw 字段里（注意不是裸 retry_after），正则兜底。
+        m = re.search(r"retry_after(?:_seconds|_seconds_raw)?['\"]?\s*[:=]\s*(\d+)", str(exc))
         ra = int(m.group(1)) if m else None
     try:
         ra = float(ra)

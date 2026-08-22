@@ -5,7 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from resolve_harness.config import Settings
-from resolve_harness.llm import LiteLLMRouter, _extract_usage, usage_diff
+from resolve_harness.llm import LiteLLMRouter, _extract_usage, usage_diff, _retry_wait
+from resolve_harness.llm import RetryPolicy
 
 
 def _router(model: str, base: str | None, key: str | None = "dummy") -> LiteLLMRouter:
@@ -110,3 +111,40 @@ def test_resolve_non_openrouter_base_not_auto_prefixed() -> None:
 def test_resolve_no_base_not_auto_prefixed() -> None:
     r = _router("z-ai/glm-5.2:free", None)
     assert r.resolve_model() == "z-ai/glm-5.2:free"
+
+
+def _rate_limit_exc(message: str, *, retry_after: float | None = None, response_headers=None):
+    """构造一个近似 litellm.RateLimitError 的假异常用于测试退避提取。"""
+    exc = RuntimeError(message)
+    if retry_after is not None:
+        exc.retry_after = retry_after  # type: ignore[attr-defined]
+    if response_headers is not None:
+        exc.response = SimpleNamespace(headers=response_headers)  # type: ignore[attr-defined]
+    return exc
+
+
+def test_retry_wait_uses_exc_retry_after() -> None:
+    exc = _rate_limit_exc("rate limited", retry_after=5)
+    assert _retry_wait(exc, 0, RetryPolicy()) == 5.0
+
+
+def test_retry_wait_uses_retry_after_header() -> None:
+    # litellm 把 Retry-After 放在响应头、异常属性为空时也能读到。
+    exc = _rate_limit_exc(
+        "RateLimitError: ...", response_headers={"Retry-After": "5"}
+    )
+    assert _retry_wait(exc, 0, RetryPolicy()) == 5.0
+
+
+def test_retry_wait_falls_back_to_retry_after_seconds_field() -> None:
+    # OpenRouter 的 JSON 用 retry_after_seconds 字段，裸正则也能兜住。
+    msg = 'RateLimitError: ... "retry_after_seconds":5, "provider_name":"Decart" ...'
+    exc = _rate_limit_exc(msg)
+    assert _retry_wait(exc, 0, RetryPolicy()) == 5.0
+
+
+def test_retry_wait_exponential_when_unknown() -> None:
+    # 没有任何上游提示时退化为指数退避（backoff_base * 2**attempt）。
+    exc = _rate_limit_exc("rate limited")
+    assert _retry_wait(exc, 0, RetryPolicy(backoff_base=1.5)) == 1.5
+    assert _retry_wait(exc, 1, RetryPolicy(backoff_base=1.5)) == 3.0
