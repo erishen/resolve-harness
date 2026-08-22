@@ -149,6 +149,13 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ path }),
     }),
+  sandboxDeleteHistory: (path: string) =>
+    request<{ sandbox_history: string[] }>(
+      `/api/sandbox/history?path=${encodeURIComponent(path)}`,
+      { method: 'DELETE' },
+    ),
+  sandboxClearHistory: () =>
+    request<{ sandbox_history: string[] }>('/api/sandbox/history/all', { method: 'DELETE' }),
   sandboxRawUrl: (path: string) => `/api/sandbox/raw?path=${encodeURIComponent(path)}`,
   sandboxFile: (path: string) =>
     request<{ path: string; content: string; size: number }>(

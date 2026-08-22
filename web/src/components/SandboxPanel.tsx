@@ -233,6 +233,24 @@ export default function SandboxPanel() {
     [load],
   )
 
+  const removeHistory = useCallback(async (path: string) => {
+    try {
+      const res = await api.sandboxDeleteHistory(path)
+      setHistory(res.sandbox_history)
+    } catch {
+      setError('移除历史目录失败')
+    }
+  }, [])
+
+  const clearHistory = useCallback(async () => {
+    try {
+      const res = await api.sandboxClearHistory()
+      setHistory(res.sandbox_history)
+    } catch {
+      setError('清空历史目录失败')
+    }
+  }, [])
+
   // 快捷目录：后端 set_sandbox_dir 已支持 ~ 展开与绝对化；「项目沙箱」发送哨兵复位默认。
   const QUICK_DIRS: { label: string; path: string }[] = [
     { label: 'ResolveHarness', path: '~/ResolveHarness' },
@@ -318,16 +336,31 @@ export default function SandboxPanel() {
               <div className="sandbox-history">
                 <span className="sandbox-hist-label">已用目录：</span>
                 {history.map((d) => (
-                  <button
+                  <span
                     key={d}
-                    type="button"
                     className={`sandbox-hist-chip${d === sandboxDir ? ' active' : ''}`}
                     title={d}
-                    onClick={() => void applyLocation(d)}
                   >
-                    {d}
-                  </button>
+                    <button
+                      type="button"
+                      className="sandbox-hist-name"
+                      onClick={() => void applyLocation(d)}
+                    >
+                      {d}
+                    </button>
+                    <button
+                      type="button"
+                      className="sandbox-hist-del"
+                      title="从历史中移除"
+                      onClick={() => void removeHistory(d)}
+                    >
+                      ×
+                    </button>
+                  </span>
                 ))}
+                <button type="button" className="sandbox-hist-clear" onClick={() => void clearHistory()}>
+                  清空
+                </button>
               </div>
             )}
           </div>

@@ -2211,23 +2211,61 @@ body {
   white-space: nowrap;
 }
 .sandbox-hist-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: 999px;
-  padding: 3px 10px;
   font-size: 11px;
-  cursor: pointer;
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 280px;
 }
 .sandbox-hist-chip:hover {
   border-color: var(--accent);
 }
 .sandbox-hist-chip.active {
   border-color: var(--accent);
+  color: var(--accent);
+}
+.sandbox-hist-name {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 3px 4px 3px 10px;
+  cursor: pointer;
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sandbox-hist-name:hover {
+  color: var(--accent);
+}
+.sandbox-hist-del {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 7px 2px 2px;
+  cursor: pointer;
+  border-radius: 999px;
+}
+.sandbox-hist-del:hover {
+  color: #ff6b6b;
+}
+.sandbox-hist-clear {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 3px 6px;
+  text-decoration: underline;
+}
+.sandbox-hist-clear:hover {
   color: var(--accent);
 }
 

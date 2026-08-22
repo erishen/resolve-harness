@@ -377,6 +377,40 @@ class TestSandbox:
         c = TestClient(create_app(harness=h))
         assert c.put("/api/sandbox/location", json={"path": ""}).status_code == 422
 
+    def test_sandbox_history_delete_and_clear(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from resolve_harness.harness import Harness
+        import resolve_harness.api as _api
+
+        dir_a = tmp_path / "a"
+        dir_b = tmp_path / "b"
+        _real_cfg = _api._load_config()
+        monkeypatch.setattr("resolve_harness.api._save_config", lambda cfg: None)
+        monkeypatch.setattr(
+            "resolve_harness.api._load_config",
+            lambda: {**_real_cfg, "sandbox_history": []},
+        )
+
+        h = Harness(sandbox_dir=str(dir_a))
+        c = TestClient(create_app(harness=h))
+        c.put("/api/sandbox/location", json={"path": str(dir_b)})
+        c.put("/api/sandbox/location", json={"path": str(dir_a)})
+        assert [str(dir_a.resolve()), str(dir_b.resolve())] == [
+            x for x in c.get("/api/sandbox").json()["sandbox_history"]
+        ]
+
+        # remove one entry (does not touch the current sandbox root)
+        del_res = c.delete(
+            "/api/sandbox/history", params={"path": str(dir_b.resolve())}
+        )
+        assert del_res.status_code == 200
+        assert del_res.json()["sandbox_history"] == [str(dir_a.resolve())]
+
+        # clear the rest
+        all_res = c.delete("/api/sandbox/history/all")
+        assert all_res.json()["sandbox_history"] == []
+
 
 class TestChatHistory:
     """Completed chat turns persist token usage; history is queryable."""

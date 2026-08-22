@@ -907,5 +907,24 @@ def _register_sandbox_routes(app: FastAPI) -> None:
         _save_config(cfg)
         return {"sandbox_dir": str(new_dir), "sandbox_history": history}
 
+    @app.delete("/api/sandbox/history")
+    def sandbox_delete_history(path: str = Query(min_length=1)) -> dict[str, Any]:
+        """从「已用目录」历史中移除某条记录（不影响当前沙箱根目录本身）。"""
+        history = [p for p in app.state.sandbox_history if p != path]
+        app.state.sandbox_history = history
+        cfg = _load_config()
+        cfg["sandbox_history"] = history
+        _save_config(cfg)
+        return {"sandbox_history": history}
+
+    @app.delete("/api/sandbox/history/all")
+    def sandbox_clear_history() -> dict[str, Any]:
+        """清空「已用目录」历史。"""
+        app.state.sandbox_history = []
+        cfg = _load_config()
+        cfg["sandbox_history"] = []
+        _save_config(cfg)
+        return {"sandbox_history": []}
+
 
 app = create_app()
