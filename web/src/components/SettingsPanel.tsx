@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../api'
+import { api, getApiToken, setApiToken } from '../api'
 import type { AppConfig, ModelProfile } from '../api'
 
 const AGENT_ROLES: { key: string; name: string; hint: string }[] = [
@@ -142,6 +142,9 @@ export default function SettingsPanel({ onModelChange }: { onModelChange?: () =>
   const [parallel, setParallel] = useState('4')
   const [replan, setReplan] = useState('1')
   const [maxSteps, setMaxSteps] = useState('10')
+  // API Token：仅存本机 localStorage，对应 .env 的 API_TOKEN（后端启用校验时必填）
+  const [tokenDraft, setTokenDraft] = useState(getApiToken())
+  const [tokenMsg, setTokenMsg] = useState('')
   const [autoSaving, setAutoSaving] = useState(false)
   const [msg, setMsg] = useState('')
   const [error, setError] = useState('')
@@ -435,6 +438,36 @@ export default function SettingsPanel({ onModelChange }: { onModelChange?: () =>
               onBlur={numOnBlur(setReplan, replan, 0)}
             />
           </label>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-title">API Token（远程访问鉴权）</div>
+        <div className="settings-row-group">
+          <label className="settings-row">
+            <span className="settings-label">
+              API Token
+              <span className="settings-hint">
+                后端 .env 设 API_TOKEN=xxx 时，此处需填相同值；仅存本机浏览器
+              </span>
+            </span>
+            <input
+              type="password"
+              className="settings-input"
+              placeholder="后端未启用则留空"
+              value={tokenDraft}
+              onChange={(e) => setTokenDraft(e.target.value)}
+              onBlur={() => {
+                setApiToken(tokenDraft)
+                setTokenMsg(tokenDraft.trim() ? '已保存到本机' : '已清除')
+              }}
+            />
+          </label>
+          {tokenMsg && (
+            <div className="settings-hint" style={{ paddingLeft: 2 }}>
+              {tokenMsg}
+            </div>
+          )}
         </div>
       </section>
 

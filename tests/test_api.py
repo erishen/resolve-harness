@@ -71,6 +71,12 @@ def _isolate_deleted_examples(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr("resolve_harness.examples._cache", None)
 
 
+@pytest.fixture(autouse=True)
+def _no_api_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """开发者真实 .env 里若配了 API_TOKEN，不能让全部 API 测试变 401。"""
+    monkeypatch.delenv("API_TOKEN", raising=False)
+
+
 class TestApi:
     def test_health(self, client: TestClient) -> None:
         res = client.get("/api/health")
@@ -161,6 +167,41 @@ class TestApi:
     def test_examples_delete_requires_text(self, client: TestClient) -> None:
         res = client.post("/api/examples/delete", json={"label": "x", "text": ""})
         assert res.status_code == 422
+
+
+class TestApiTokenAuth:
+    """API_TOKEN 配置后的 Bearer 鉴权：未配置则全放行（本地模式）。"""
+
+    def test_open_when_token_unset(self, client: TestClient) -> None:
+        assert client.get("/api/state").status_code == 200
+
+    def test_bearer_token_required_and_accepted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("API_TOKEN", "sekrit")
+        c = TestClient(create_app(harness=FakeHarness()))
+        # 无头 / 错 token → 401；对 / 对应 X-API-Token → 200
+        assert c.get("/api/state").status_code == 401
+        r = c.get("/api/state", headers={"Authorization": "Bearer wrong"})
+        assert r.status_code == 401
+        assert "API Token" in r.json()["detail"]
+        assert c.get("/api/state", headers={"Authorization": "Bearer sekrit"}).status_code == 200
+        assert c.get("/api/state", headers={"X-API-Token": "sekrit"}).status_code == 200
+
+    def test_preflight_options_not_blocked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CORS 预检不带自定义头，必须放行给 CORS 层，不能被鉴权拦成 401。"""
+        monkeypatch.setenv("API_TOKEN", "sekrit")
+        c = TestClient(create_app(harness=FakeHarness()))
+        r = c.options(
+            "/api/chat",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        assert r.status_code in (200, 204)
 
 
 class TestSandbox:

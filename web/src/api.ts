@@ -36,11 +36,36 @@ export interface AppConfig {
   env_model: { base_url: string; model: string; api_key_env: string }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+// ---- API Token（对应后端 .env 的 API_TOKEN）----------------------------
+// 仅存本机 localStorage；后端启用校验时自动附带到每个 /api 请求。
+const TOKEN_KEY = 'resolve_harness.apiToken'
+
+export function getApiToken(): string {
+  return localStorage.getItem(TOKEN_KEY) ?? ''
+}
+
+export function setApiToken(token: string): void {
+  const t = token.trim()
+  if (t) localStorage.setItem(TOKEN_KEY, t)
+  else localStorage.removeItem(TOKEN_KEY)
+}
+
+async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const token = getApiToken()
+  if (token) headers.Authorization = `Bearer ${token}`
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers: { ...headers, ...(init?.headers as Record<string, string>) },
   })
+  // 后端开启了 API_TOKEN 而本地没配 → 问一次并存下，重试本次请求
+  if (res.status === 401 && !retried) {
+    const input = window.prompt('后端已启用 API Token 校验，请输入 API Token：')
+    if (input !== null) {
+      setApiToken(input)
+      return request<T>(path, init, true)
+    }
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => '')
     throw new Error(`${res.status} ${body.slice(0, 200)}`)

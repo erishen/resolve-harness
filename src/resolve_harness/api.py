@@ -40,13 +40,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import queue
+import os
+import secrets
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .chat_history import ChatHistoryStore
@@ -317,6 +318,32 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # API Token 鉴权：.env 设 API_TOKEN 即启用，全部 /api/* 需携带
+    # `Authorization: Bearer <token>`（或 X-API-Token）。不设 = 本地免鉴权。
+    # OPTIONS 预检放行（浏览器预检请求不会带自定义头，交给 CORS 层应答）。
+    app.state.api_token = (os.getenv("API_TOKEN") or "").strip()
+
+    @app.middleware("http")
+    async def _api_token_guard(request: Request, call_next):
+        token: str = app.state.api_token
+        if (
+            token
+            and request.url.path.startswith("/api/")
+            and request.method != "OPTIONS"
+        ):
+            header = request.headers.get("authorization", "")
+            provided = (
+                header[7:].strip()
+                if header.lower().startswith("bearer ")
+                else request.headers.get("x-api-token", "")
+            )
+            if not secrets.compare_digest(provided, token):
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "未授权：请在设置中填写 API Token（.env 的 API_TOKEN）"},
+                )
+        return await call_next(request)
 
     # -- routes --------------------------------------------------------------
 
