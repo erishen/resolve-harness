@@ -28,9 +28,6 @@ BUILTIN_EXAMPLES: list[dict[str, str]] = [
     {"label": "小项目", "text": "创建一个小型 Python 项目：README.md 写项目说明，hello.py 写一个打印问候的脚本", "source": "builtin"},
     {"label": "代码+文档", "text": "写一个 Python 快速排序函数保存为 quicksort.py，并写 100 字使用说明保存为 quicksort-notes.md", "source": "builtin"},
     {"label": "抓 JD", "text": "用 fetch 工具获取 https://remotive.com/api/remote-jobs?search=python 的 python 岗位 JD 列表，提取前 3 个岗位的标题、公司与工作地点，汇总保存为沙箱文件 python-jobs.md", "source": "builtin"},
-    {"label": "查行情", "text": "用 fetch 工具获取实时行情。目标公司任选一家知名公司（也可用上方公司下拉框选择）：先确定其腾讯行情代号（美股 usXXXX、港股 hk5 位数字、A 股 sh6XXXXX 沪市 / sz0XXXXX 深市，如苹果=usAAPL），fetch https://qt.gtimg.cn/q=<代号> 解析当前价格与涨跌幅，保存为沙箱文件 quote.md", "source": "builtin"},
-    {"label": "查汇率", "text": "用 fetch 工具获取 https://qt.gtimg.cn/q=whUSDCNY 的汇率数据，解析美元兑人民币的当前汇率、涨跌额与涨跌幅，保存为沙箱文件 fx-rate.md", "source": "builtin"},
-    {"label": "查全球指数", "text": "用 fetch 工具获取 https://qt.gtimg.cn/q=usDJI,usIXIC,usINX 的全球指数行情，解析道琼斯、纳斯达克与标普500 的当前点位与涨跌幅，保存为沙箱文件 indices.md", "source": "builtin"},
     {"label": "查期货", "text": "调用 run_script 工具运行脚本 fetch_shfe_futures：该脚本会自动取今天日期、抓取上海期货交易所官网每日行情、按涨跌幅取前 5 大期货合约，并写入沙箱文件 futures.md（脚本内部已处理日期与非交易日回滚，无需你手动拼 URL 或猜日期）。运行后查看 futures.md，确认内容包含前 5 大涨幅合约的合约名称（PRODUCTNAME+DELIVERYMONTH）、最新价（CLOSEPRICE）与涨跌幅（真实数据，非占位）。", "source": "builtin"},
     {"label": "闰年插件", "text": "判断给定年份是否为闰年并简述规则（如问『2024 年是闰年吗』应回答『是闰年』）。该问题为纯确定性逻辑，请走 fast-path 插件运行时：由 codegen 生成 detect 检测器并持久化到 data/fastpath_plugins，之后同类问题零模型命中 load_plugins 缓存复用。", "source": "builtin"},
 ]

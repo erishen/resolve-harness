@@ -15,115 +15,6 @@ const FALLBACK_EXAMPLES: { label: string; text: string; source: string }[] = [
   { label: '代码+文档', text: '写一个 Python 快速排序函数保存为 quicksort.py，并写 100 字使用说明保存为 quicksort-notes.md', source: 'builtin' },
 ]
 
-/** 参数化示例模板：点击命中的示例卡片时，显示对应的参数下拉，选择后自动生成任务文本。 */
-interface ParamOption {
-  value: string
-  label: string
-  group?: string
-}
-
-interface ParamTemplate {
-  key: string
-  label: string
-  default: string
-  options: ParamOption[]
-  build: (value: string) => string
-}
-
-const COMPANY_OPTIONS: ParamOption[] = [
-  { value: 'usAAPL', label: '苹果 · usAAPL', group: '美股' },
-  { value: 'usNVDA', label: '英伟达 · usNVDA', group: '美股' },
-  { value: 'usTSLA', label: '特斯拉 · usTSLA', group: '美股' },
-  { value: 'usMSFT', label: '微软 · usMSFT', group: '美股' },
-  { value: 'usGOOGL', label: '谷歌 · usGOOGL', group: '美股' },
-  { value: 'usAMZN', label: '亚马逊 · usAMZN', group: '美股' },
-  { value: 'hk00700', label: '腾讯控股 · hk00700', group: '港股' },
-  { value: 'hk09988', label: '阿里巴巴 · hk09988', group: '港股' },
-  { value: 'hk01810', label: '小米集团 · hk01810', group: '港股' },
-  { value: 'hk03690', label: '美团 · hk03690', group: '港股' },
-  { value: 'sh600519', label: '贵州茅台 · sh600519', group: 'A股' },
-  { value: 'sz002594', label: '比亚迪 · sz002594', group: 'A股' },
-  { value: 'sz300750', label: '宁德时代 · sz300750', group: 'A股' },
-  { value: 'sh601318', label: '中国平安 · sh601318', group: 'A股' },
-]
-
-const FX_OPTIONS: ParamOption[] = [
-  { value: 'whUSDCNY', label: '美元 / 人民币' },
-  { value: 'whEURCNY', label: '欧元 / 人民币' },
-  { value: 'whJPYCNY', label: '日元 / 人民币' },
-  { value: 'whGBPCNY', label: '英镑 / 人民币' },
-  { value: 'whHKDCNY', label: '港币 / 人民币' },
-]
-
-const INDEX_OPTIONS: ParamOption[] = [
-  { value: 'usDJI', label: '道琼斯' },
-  { value: 'usIXIC', label: '纳斯达克' },
-  { value: 'usINX', label: '标普 500' },
-  { value: 'hkHSI', label: '恒生指数' },
-  { value: 'sh000001', label: '上证指数' },
-]
-
-function optionLabel(options: ParamOption[], value: string): string {
-  return options.find((o) => o.value === value)?.label.split(' · ')[0] ?? value
-}
-
-function quoteObjective(value: string): string {
-  const name = optionLabel(COMPANY_OPTIONS, value)
-  const symbol = value.slice(2).toLowerCase()
-  if (value.startsWith('us')) {
-    return `用 fetch 工具获取 https://qt.gtimg.cn/q=${value} 的美股行情，解析${name}的当前价格与涨跌幅，保存为沙箱文件 ${symbol}-quote.md`
-  }
-  if (value.startsWith('hk')) {
-    return `用 fetch 工具获取 https://qt.gtimg.cn/q=${value} 的港股行情，解析${name}的当前价格与涨跌幅，保存为沙箱文件 ${symbol}-quote.md`
-  }
-  return `用 fetch 工具获取 https://qt.gtimg.cn/q=${value} 的股票行情，解析${name}的当前价格、涨跌额与涨跌幅，保存为沙箱文件 ${symbol}-quote.md`
-}
-
-const PARAM_TEMPLATES: ParamTemplate[] = [
-  {
-    key: 'company',
-    label: '目标公司',
-    default: 'usAAPL',
-    options: COMPANY_OPTIONS,
-    build: quoteObjective,
-  },
-  {
-    key: 'fx',
-    label: '汇率对',
-    default: 'whUSDCNY',
-    options: FX_OPTIONS,
-    build: (value) => {
-      const name = optionLabel(FX_OPTIONS, value)
-      const symbol = value.slice(2).toLowerCase()
-      return `用 fetch 工具获取 https://qt.gtimg.cn/q=${value} 的汇率数据，解析${name}的当前汇率、涨跌额与涨跌幅，保存为沙箱文件 fx-${symbol}.md`
-    },
-  },
-  {
-    key: 'index',
-    label: '指数',
-    default: 'usDJI',
-    options: INDEX_OPTIONS,
-    build: (value) => {
-      const name = optionLabel(INDEX_OPTIONS, value)
-      const symbol = value.slice(2).toLowerCase()
-      return `用 fetch 工具获取 https://qt.gtimg.cn/q=${value} 的指数行情，解析${name}的当前点位与涨跌幅，保存为沙箱文件 idx-${symbol}.md`
-    },
-  },
-]
-
-function templateByKey(key: string | null): ParamTemplate | null {
-  return PARAM_TEMPLATES.find((t) => t.key === key) ?? null
-}
-
-/** 示例卡片 → 参数模板：命中则点击卡片时显示对应下拉。关键词匹配，互斥。 */
-function matchTemplate(ex: { label: string; text: string }): ParamTemplate | null {
-  const hay = `${ex.label} ${ex.text}`
-  if (/查行情|实时行情/.test(hay)) return templateByKey('company')
-  if (/汇率/.test(hay)) return templateByKey('fx')
-  if (/指数/.test(hay)) return templateByKey('index')
-  return null
-}
-
 /** Example cards are grouped into a few coarse categories for quick scanning. */
 const CATEGORY_META = {
   net: { icon: '🌐', name: '联网' },
@@ -249,30 +140,6 @@ interface Props {
 
 export default function TaskPanel({ onMemoryChange }: Props) {
   const [objective, setObjective] = useState('')
-  const [paramKey, setParamKey] = useState<string | null>('company')
-  const [paramValue, setParamValue] = useState('usAAPL')
-
-  // 任务模板选择记忆：切 Tab 回来不丢（用户上次选的模板/参数）
-  useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem('resolve_harness_task_param')
-      if (raw) {
-        const p = JSON.parse(raw) as { key: string | null; value: string }
-        if (typeof p.key === 'string' || p.key === null) setParamKey(p.key)
-        if (typeof p.value === 'string') setParamValue(p.value)
-      }
-    } catch {
-      /* 损坏则忽略，用默认 */
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  useEffect(() => {
-    sessionStorage.setItem(
-      'resolve_harness_task_param',
-      JSON.stringify({ key: paramKey, value: paramValue }),
-    )
-  }, [paramKey, paramValue])
   const [events, setEvents] = useState<TaskEvent[]>([])
   const [state, setState] = useState<RunState>('idle')
   const [error, setError] = useState('')
@@ -364,18 +231,8 @@ export default function TaskPanel({ onMemoryChange }: Props) {
     }
   }, [])
 
-  useEffect(() => {
-    // 默认激活「查行情」模板并预填苹果任务：打开任务 Tab 即可直接运行
-    if (!objective) {
-      const t = templateByKey('company')
-      if (t) setObjective(t.build(t.default))
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   const items = groupEvents(events)
   const toolCalls = events.filter((e) => e.type === 'tool_call').length
-  const param = templateByKey(paramKey)
 
   // 顶部模型标签：按 Agent 角色解析任务模型（agent_models[phase] 独立配置 →
   // 空 = 跟随 .env 基线 env_model，与「聊天模型」default_model 独立）。
@@ -642,16 +499,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
   const busy = state === 'running'
 
   const pickExample = (ex: { label: string; text: string }) => {
-    // 参数化示例：激活对应下拉并生成默认任务；普通示例：隐藏下拉、填原文
-    const t = matchTemplate(ex)
-    if (t) {
-      setParamKey(t.key)
-      setParamValue(t.default)
-      setObjective(t.build(t.default))
-    } else {
-      setParamKey(null)
-      setObjective(ex.text)
-    }
+    setObjective(ex.text)
     inputRef.current?.focus()
   }
 
@@ -808,39 +656,6 @@ export default function TaskPanel({ onMemoryChange }: Props) {
             void runTask()
           }}
         >
-          {param && (
-            <select
-              className="quote-select"
-              value={paramValue}
-              disabled={busy}
-              title={`${param.label}：选择后自动生成任务文本`}
-              onChange={(e) => {
-                const v = e.target.value
-                setParamValue(v)
-                setObjective(param.build(v))
-              }}
-            >
-              {param.options.some((o) => o.group) ? (
-                [...new Set(param.options.map((o) => o.group))].map((group) => (
-                  <optgroup key={group} label={group}>
-                    {param.options
-                      .filter((o) => o.group === group)
-                      .map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                  </optgroup>
-                ))
-              ) : (
-                param.options.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))
-              )}
-            </select>
-          )}
           <input
             ref={inputRef}
             value={objective}
