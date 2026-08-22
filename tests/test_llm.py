@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from resolve_harness.config import Settings
 from resolve_harness.llm import LiteLLMRouter, _extract_usage, usage_diff
+
+
+def _router(model: str, base: str | None, key: str | None = "dummy") -> LiteLLMRouter:
+    s = Settings()
+    s.model = model
+    s.api_base = base
+    s.api_key = key
+    return LiteLLMRouter(s)
 
 
 def test_extract_usage_from_usage_object() -> None:
@@ -68,3 +77,36 @@ def test_ensure_user_trailing_noop_when_not_ending_in_tool() -> None:
         {"role": "assistant", "content": "a"},
     ]
     assert LiteLLMRouter._ensure_user_trailing(msgs) is msgs
+
+
+def test_resolve_openrouter_namespace_auto_prefix() -> None:
+    # OpenRouter 模型名形如 z-ai/glm-5.2:free，首段是作者命名空间而非
+    # litellm provider；api_base 命中 openrouter 时应自动补 openrouter/
+    # 前缀，否则会报 "LLM Provider NOT provided"。
+    r = _router("z-ai/glm-5.2:free", "https://openrouter.ai/api/v1")
+    assert r.resolve_model() == "openrouter/z-ai/glm-5.2:free"
+
+
+def test_resolve_openrouter_explicit_prefix_kept() -> None:
+    # 已显式带合法 provider 前缀的不动，避免重复前缀。
+    r = _router("openrouter/z-ai/glm-5.2:free", "https://openrouter.ai/api/v1")
+    assert r.resolve_model() == "openrouter/z-ai/glm-5.2:free"
+    r2 = _router("openai/gpt-4o", "https://openrouter.ai/api/v1")
+    assert r2.resolve_model() == "openai/gpt-4o"
+
+
+def test_resolve_no_slash_gets_openai_prefix() -> None:
+    # 无 '/' 的模型名 + 自定义 base 沿用既有约定补 openai/。
+    r = _router("gpt-4o", "https://openrouter.ai/api/v1")
+    assert r.resolve_model() == "openai/gpt-4o"
+
+
+def test_resolve_non_openrouter_base_not_auto_prefixed() -> None:
+    # 非 OpenRouter 的自定义网关不在本次自动修复范围，保持原样（沿用既有约定）。
+    r = _router("org/mymodel", "https://mygw.example/v1")
+    assert r.resolve_model() == "org/mymodel"
+
+
+def test_resolve_no_base_not_auto_prefixed() -> None:
+    r = _router("z-ai/glm-5.2:free", None)
+    assert r.resolve_model() == "z-ai/glm-5.2:free"

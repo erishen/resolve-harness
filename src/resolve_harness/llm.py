@@ -31,6 +31,19 @@ litellm.drop_params = True
 # keys we track per call (OpenAI-compatible usage shape)
 _USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
 
+# litellm 认可的 provider 前缀集合，用于判断模型名是否已带合法前缀。
+try:
+    _LITELLM_PROVIDERS = set(getattr(litellm, "provider_list", []) or [])
+except Exception:  # litellm 内部结构兜底，避免一处异常拖垮整个模块
+    _LITELLM_PROVIDERS = set()
+# 兜底：常见 provider（provider_list 缺失时仍可正确识别）。
+_LITELLM_PROVIDERS |= {
+    "openai", "anthropic", "deepseek", "gemini", "groq", "cohere", "mistral",
+    "azure", "bedrock", "ollama", "openrouter", "vertex_ai", "databricks",
+    "together", "perplexity", "xai", "ai21", "huggingface", "replicate",
+    "sagemaker", "vllm", "text-completion", "hosted_vllm", "hosted_mistral",
+}
+
 # 速率限制重试：厂商配额（RPM/TPM）耗尽时指数退避后自动重试，让短暂的配额
 # 窗口自行恢复，而不是一次失败就中断整轮。
 _RATE_LIMIT_MAX_RETRIES = 3
@@ -197,9 +210,20 @@ class LiteLLMRouter:
             model_name = profile.get("model") or name
         # 自定义 OpenAI 兼容网关（base_url 非空）下，litellm 需要明确的
         # provider 前缀；模型名未带前缀（无 '/'）时默认补 `openai/`，否则会报
-        # "LLM Provider NOT provided"。已带前缀（如 openai/、deepseek/）原样。
-        if base and "/" not in model_name:
-            model_name = "openai/" + model_name
+        # "LLM Provider NOT provided"。已带合法 provider 前缀（如 openai/、
+        # deepseek/）原样放行。
+        if base:
+            if "/" not in model_name:
+                model_name = "openai/" + model_name
+            elif "openrouter" in base.lower():
+                # OpenRouter 模型名形如 `z-ai/glm-5.2:free`，其首段是作者
+                # 命名空间而非 litellm provider，原样放行会报
+                # "LLM Provider NOT provided"。首段不是已知 provider 时补
+                # `openrouter/` 前缀让其正确路由（已显式带 openai/、
+                # openrouter/ 等合法前缀的不动，避免重复前缀）。
+                prefix = model_name.split("/", 1)[0]
+                if prefix not in _LITELLM_PROVIDERS:
+                    model_name = "openrouter/" + model_name
         return model_name, base, key
 
     def _policy_for(self, api_base: str | None) -> RetryPolicy:
