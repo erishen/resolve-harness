@@ -42,6 +42,7 @@ export default function ChatPanel({ onAfterTurn }: Props) {
   const [histTurns, setHistTurns] = useState<ChatTurn[]>([])
   const [histOpen, setHistOpen] = useState(false)
   const [fastOpen, setFastOpen] = useState(false)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
   // 会话级模型覆盖：'' = 跟随聊天模型；否则本会话用该模型库别名
   const [sessionModel, setSessionModel] = useState('')
   const [modelAliases, setModelAliases] = useState<string[]>([])
@@ -96,12 +97,15 @@ export default function ChatPanel({ onAfterTurn }: Props) {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, busy])
 
-  const send = async () => {
-    const text = input.trim()
-    if (!text || busy) return
+  const doSend = async (text: string, replaceId?: string) => {
+    if (busy) return
     setError('')
-    setInput('')
-    setMessages((m) => [...m, { id: crypto.randomUUID(), role: 'user', content: text }])
+    if (replaceId) {
+      // 重试：移除被重试的那条旧回复，对应的用户消息保留
+      setMessages((m) => m.filter((x) => x.id !== replaceId))
+    } else {
+      setMessages((m) => [...m, { id: crypto.randomUUID(), role: 'user', content: text }])
+    }
     setBusy(true)
     try {
       const res = await api.chat(text, sessionModel || undefined)
@@ -138,6 +142,38 @@ export default function ChatPanel({ onAfterTurn }: Props) {
     } finally {
       setBusy(false)
     }
+  }
+
+  const send = () => {
+    const text = input.trim()
+    if (!text || busy) return
+    setInput('')
+    void doSend(text)
+  }
+
+  /** 重试：用本条 AI 回答之前的用户消息重新生成，并替换原回答。 */
+  const retryFrom = (messageId: string) => {
+    const idx = messages.findIndex((x) => x.id === messageId)
+    if (idx <= 0) return
+    let userText = ''
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        userText = messages[i].content
+        break
+      }
+    }
+    if (!userText.trim() || busy) return
+    void doSend(userText, messageId)
+  }
+
+  const copyContent = (content: string, id: string) => {
+    void navigator.clipboard?.writeText(content).then(
+      () => {
+        setCopiedId(id)
+        window.setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1500)
+      },
+      () => setError('复制失败'),
+    )
   }
 
   // swap an approval card for either a chained one or the final reply
@@ -257,9 +293,28 @@ export default function ChatPanel({ onAfterTurn }: Props) {
         {messages.length === 0 && !busy && (
           <div className="empty">向 agent 提问吧 — 例如「现在几点？」或「记住我喜欢深色主题」</div>
         )}
-        {messages.map((m) => (
+         {messages.map((m) => (
           <div key={m.id} className={`msg ${m.role}`}>
             <div className="bubble">{m.content}</div>
+            {m.role === 'assistant' && m.content && !m.approval && (
+              <div className="msg-actions">
+                <button
+                  type="button"
+                  className="msg-copy"
+                  onClick={() => copyContent(m.content, m.id)}
+                >
+                  {copiedId === m.id ? '✓ 已复制' : '📋 复制'}
+                </button>
+                <button
+                  type="button"
+                  className="msg-retry"
+                  onClick={() => retryFrom(m.id)}
+                  disabled={busy}
+                >
+                  ↻ 重试
+                </button>
+              </div>
+            )}
             {isFastPath(m) && (
               <button
                 type="button"

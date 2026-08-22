@@ -294,6 +294,35 @@ body {
   border-bottom-left-radius: 4px;
 }
 
+/* assistant answer actions: copy / retry */
+.msg-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.msg-copy,
+.msg-retry {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.msg-copy:hover,
+.msg-retry:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.msg-retry:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* tool trace chips */
 .tool-trace {
   margin-top: 6px;
