@@ -14,6 +14,7 @@ Extra tools can be registered on the harness with `h.tools.register(...)`.
 from __future__ import annotations
 
 import datetime
+import os
 import shlex
 import subprocess
 import sys
@@ -40,6 +41,16 @@ def _make_run_script_tool(
     避免模型自己拼 URL 或猜日期导致失败。
     """
     base = Path(scripts_dir) if scripts_dir else Path(__file__).resolve().parents[3] / "scripts"
+
+    def _script_env() -> dict[str, str]:
+        """子进程最小环境：不继承父进程的 API key 等敏感变量（纵深防御）。
+        白名单脚本当前可信，但脚本集会被扩展，输出又会回传给模型——
+        与其依赖「脚本永远不打印 env」，不如从源头不给。"""
+        keep = (
+            "PATH", "HOME", "LANG", "LC_CTYPE", "TMPDIR", "PYTHONUNBUFFERED",
+            "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+        )
+        return {k: os.environ[k] for k in keep if k in os.environ}
 
     def run_script(name: str, args: str = "") -> str:
         """在沙箱内运行项目 scripts/ 下受信任的脚本（白名单），返回标准输出/错误。
@@ -74,7 +85,12 @@ def _make_run_script_tool(
         cmd += ["--out", "futures.md"]
         try:
             proc = subprocess.run(
-                cmd, cwd=sandbox_dir, capture_output=True, text=True, timeout=90
+                cmd,
+                cwd=sandbox_dir,
+                capture_output=True,
+                text=True,
+                timeout=90,
+                env=_script_env(),
             )
         except subprocess.TimeoutExpired:
             return "脚本执行超时（>90s），已终止"

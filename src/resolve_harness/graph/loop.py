@@ -185,7 +185,11 @@ def build_loop(
                     # Edited args replace the original ones wholesale.
                     args = decision.get("args") or args
                 if verbose:
-                    logger.info("[tools] %s(%s)", name, args)
+                    # 参数可能携带完整文件内容 / 抓取结果，只记摘要防敏感数据进日志
+                    shown = repr(args)
+                    if len(shown) > 300:
+                        shown = shown[:300] + "…(截断)"
+                    logger.info("[tools] %s(%s)", name, shown)
                 try:
                     result = registry.execute(name, args)
                 except Exception as exc:  # noqa: BLE001 - tool errors go back to the model

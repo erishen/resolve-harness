@@ -280,6 +280,31 @@ class TestRunScript:
         fn = builtin_mod._make_run_script_tool(None)
         assert "未配置沙箱" in fn("fetch_shfe_futures")
 
+    def test_subprocess_env_strips_secrets(self, tmp_path, monkeypatch) -> None:
+        """子进程只拿最小环境：父进程的 API key 等敏感变量不得透传，
+        但 PATH 等脚本运行必需变量保留。"""
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        (scripts / "demo.py").write_text(
+            "import os, sys\n"
+            "from pathlib import Path\n"
+            "has_key = 'YES' if 'LLM_API_KEY' in os.environ else 'NO'\n"
+            "has_path = 'YES' if os.environ.get('PATH') else 'NO'\n"
+            "Path('futures.md').write_text(f'key={has_key} path={has_path}')\n"
+        )
+        monkeypatch.setenv("LLM_API_KEY", "sk-secret-probe")
+        saved = builtin_mod.RUN_SCRIPT_ALLOWLIST
+        builtin_mod.RUN_SCRIPT_ALLOWLIST = frozenset({"demo"})
+        try:
+            fn = builtin_mod._make_run_script_tool(str(tmp_path), scripts_dir=str(scripts))
+            out = fn("demo", "")
+            assert "退出码 0" in out
+            body = (tmp_path / "futures.md").read_text(encoding="utf-8")
+            assert "key=NO" in body, f"API key 泄漏进了子进程环境: {out}"
+            assert "path=YES" in body
+        finally:
+            builtin_mod.RUN_SCRIPT_ALLOWLIST = saved
+
     def test_out_argument_confined_to_sandbox(self, tmp_path) -> None:
         """模型传入的绝对/越界 --out 必须被忽略，产出始终落在沙箱内 futures.md。"""
         import os
