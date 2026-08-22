@@ -35,31 +35,39 @@ class LongTermMemory:
             else:
                 db_path = Path.cwd() / "data" / "memory.db"
         self.db_path = Path(db_path)
-        if str(self.db_path) != ":memory:":
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
         # Web servers (FastAPI) touch this from multiple threads: allow it and
         # guard every op with a lock. Single connection, serialized writes.
-        self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        # 懒连接：构造时不触碰磁盘，避免 import 期（uvicorn app 模块）误建真实库。
         self._lock = threading.RLock()
-        self._init_schema()
+        self._db: sqlite3.Connection | None = None
+
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        if self._db is None:
+            with self._lock:
+                if self._db is None:
+                    if str(self.db_path) != ":memory:":
+                        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+                    self._db = sqlite3.connect(str(self.db_path), check_same_thread=False)
+                    self._db.row_factory = sqlite3.Row
+                    self._init_schema()
+        return self._db
 
     # -- schema -------------------------------------------------------------
 
     def _init_schema(self) -> None:
-        with self._lock:
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS memories (
-                    scope      TEXT NOT NULL,
-                    key        TEXT NOT NULL,
-                    value      TEXT NOT NULL,          -- JSON-encoded
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY (scope, key)
-                )
-                """
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memories (
+                scope      TEXT NOT NULL,
+                key        TEXT NOT NULL,
+                value      TEXT NOT NULL,          -- JSON-encoded
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (scope, key)
             )
-            self._conn.commit()
+            """
+        )
+        self._conn.commit()
 
     # -- core ops -----------------------------------------------------------
 

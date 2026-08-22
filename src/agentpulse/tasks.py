@@ -43,6 +43,9 @@ MAX_REPLAN_ROUNDS = 1  # hard ceiling on plan-revision rounds (anti-runaway)
 
 # How many successful tasks the persisted history keeps (oldest dropped).
 HISTORY_KEEP = 500
+# 内存中保留的「已结束」任务上限；超出后淘汰最旧的已结束记录（SQLite 历史仍在，
+# get() 会回退到 _history）。运行中的任务永不淘汰，避免长服务内存只增不减。
+MAX_LIVE_RECORDS = 200
 
 
 def default_history_path() -> Path:
@@ -113,7 +116,6 @@ class TaskRecord:
         self.events: list[dict[str, Any]] = []
         self.created_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         self.error: str | None = None
-        self.queue: queue.Queue = queue.Queue()
         # 后续订阅者（如「切 Tab 再切回」重连 SSE）：_emit 会广播给它们
         self.subscribers: list[queue.Queue] = []
 
@@ -280,8 +282,23 @@ class TaskRunner:
                 )
                 conn.commit()
             self._history[record.task_id] = snap
+            self._evict_finished()
         except sqlite3.Error:
             pass  # persistence is best-effort; the in-memory record still works
+
+    def _evict_finished(self) -> None:
+        """淘汰最旧的「已结束」任务记录，防止长服务内存只增不减。
+
+        运行中任务永不淘汰；get() 对已淘汰的已结束任务会回退到 SQLite 历史。
+        """
+        with self._lock:
+            if len(self._records) <= MAX_LIVE_RECORDS:
+                return
+            finished = [r for r in self._records.values() if r.status != "running"]
+            finished.sort(key=lambda r: r.created_at)
+            overflow = len(self._records) - MAX_LIVE_RECORDS
+            for r in finished[:overflow]:
+                self._records.pop(r.task_id, None)
 
     # -- public API -----------------------------------------------------------
 
@@ -363,7 +380,6 @@ class TaskRunner:
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds"),
         }
         record.events.append(event)
-        record.queue.put(event)
         for sub in record.subscribers:  # 切 Tab 重连的订阅者
             sub.put(event)
         # 事件日志：每个事件实时持久化（运行中/失败也留档，可重放）
@@ -480,9 +496,7 @@ class TaskRunner:
                 {"message": str(exc), "usage": usage_diff(self.router, usage_baseline)},
             )
         finally:
-            # 哨兵也要扇出给活跃订阅者：SSE/测试的 drain() 靠 None 收尾，
-            # 只放 record.queue 会让 live 订阅者永远等不到流结束。
-            record.queue.put(None)
+            # 哨兵也要扇出给活跃订阅者：SSE/测试的 drain() 靠 None 收尾。
             for sub in record.subscribers:
                 sub.put(None)
 

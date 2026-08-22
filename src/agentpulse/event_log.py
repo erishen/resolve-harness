@@ -42,25 +42,35 @@ class EventLog:
     def __init__(self, db_path: str | None = None, keep: int = 5000) -> None:
         self.path = str(Path(db_path) if db_path else default_event_log_path())
         self.keep = keep
-        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                scope TEXT NOT NULL,
-                ref_id TEXT NOT NULL,
-                ts TEXT NOT NULL,
-                type TEXT NOT NULL,
-                data TEXT NOT NULL
-            )
-            """
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_events_scope_ref ON events(scope, ref_id)"
-        )
-        self._conn.commit()
+        # 懒连接：构造时不触碰磁盘，避免 import 期（如 uvicorn 的 app 模块）误建真实库。
+        self._db: sqlite3.Connection | None = None
+
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        """首次访问时才打开并建表（线程安全）；之后复用同一连接。"""
+        if self._db is None:
+            with self._lock:
+                if self._db is None:
+                    Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+                    self._db = sqlite3.connect(self.path, check_same_thread=False)
+                    self._db.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS events (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            scope TEXT NOT NULL,
+                            ref_id TEXT NOT NULL,
+                            ts TEXT NOT NULL,
+                            type TEXT NOT NULL,
+                            data TEXT NOT NULL
+                        )
+                        """
+                    )
+                    self._db.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_events_scope_ref ON events(scope, ref_id)"
+                    )
+                    self._db.commit()
+        return self._db
 
     def append(self, scope: str, ref_id: str, type_: str, data: dict | None = None) -> None:
         """Append one event; best-effort (logging must never break the agent)."""

@@ -29,24 +29,33 @@ class ChatHistoryStore:
     def __init__(self, db_path: str | None = None, keep: int = 200) -> None:
         self.path = str(Path(db_path) if db_path else default_chat_history_path())
         self.keep = keep
-        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS chat_turns (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at TEXT NOT NULL,
-                user_msg TEXT NOT NULL,
-                reply TEXT NOT NULL,
-                steps INTEGER NOT NULL DEFAULT 0,
-                prompt_tokens INTEGER NOT NULL DEFAULT 0,
-                completion_tokens INTEGER NOT NULL DEFAULT 0,
-                total_tokens INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
-        self._conn.commit()
+        # 懒连接：构造时不触碰磁盘，避免 import 期误建真实库。
+        self._db: sqlite3.Connection | None = None
+
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        if self._db is None:
+            with self._lock:
+                if self._db is None:
+                    Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+                    self._db = sqlite3.connect(self.path, check_same_thread=False)
+                    self._db.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS chat_turns (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            created_at TEXT NOT NULL,
+                            user_msg TEXT NOT NULL,
+                            reply TEXT NOT NULL,
+                            steps INTEGER NOT NULL DEFAULT 0,
+                            prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                            completion_tokens INTEGER NOT NULL DEFAULT 0,
+                            total_tokens INTEGER NOT NULL DEFAULT 0
+                        )
+                        """
+                    )
+                    self._db.commit()
+        return self._db
 
     def record(
         self,

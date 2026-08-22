@@ -13,14 +13,19 @@ JSON payload is unusable and makes the agent loop trying to fix it.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
+import socket
+from urllib.parse import urlparse
 
 import httpx
 
 _DEFAULT_MAX_CHARS = 20000
 _TIMEOUT_SECONDS = 8.0
 _UA = "agentpulse-fetch/0.1"
+# 下载上限：整响应进内存会 OOM（慢速/巨型 body），流式累积到此即停止。
+_MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024
 # 巨型 JSON 列表精简时保留的记录数。金融/行情类接口（如上期所每日行情
 # 含数百条合约）需要足够多的行才能让模型做「按涨跌幅取前 N」这类排序，
 # 3 条太少会直接丢失排名信息；60 条约 20KB，仍在上下文可控范围内。
@@ -115,34 +120,78 @@ def _compact_html(text: str) -> str | None:
     return None
 
 
+def _is_safe_host(url: str) -> bool:
+    """SSRF 防护：解析主机并拒绝指向内网/回环/链路本地等保留地址的请求。
+
+    仅做初始主机检查（重定向跟随由 httpx 内部完成，跳板式重定向属残余风险，
+    该工具本就走人工审批门，风险可控）。
+    """
+    host = urlparse(url).hostname
+    if not host:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (socket.gaierror, ValueError):
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            return False
+    return True
+
+
 def fetch(url: str) -> str:
     """抓取公开 http(s) URL 并返回其文本内容。
 
-    错误（非法协议、网络失败、HTTP 错误状态码）以可读文本返回而不是抛出，
+    错误（非法协议、网络失败、HTTP 错误状态码、内网地址）以可读文本返回而不是抛出，
     以便 agent 根据内容反应并重试。响应大小有内部上限——模型无法放大它，
     超大页面永远不会撑爆上下文。
     """
     if not url.strip().lower().startswith(("http://", "https://")):
         return f"仅支持 http/https URL：{url!r}"
+    if not _is_safe_host(url):
+        return f"拒绝访问保留/内网地址（SSRF 防护）：{url!r}"
 
     try:
-        resp = httpx.get(
+        with httpx.stream(
+            "GET",
             url,
             timeout=_TIMEOUT_SECONDS,
             follow_redirects=True,
             headers={"User-Agent": _UA},
-        )
-        resp.raise_for_status()
+        ) as resp:
+            resp.raise_for_status()
+            chunks: list[bytes] = []
+            total = 0
+            capped = False
+            for chunk in resp.iter_bytes(8192):
+                total += len(chunk)
+                if total > _MAX_DOWNLOAD_BYTES:
+                    capped = True
+                    break
+                chunks.append(chunk)
+            body = b"".join(chunks).decode("utf-8", errors="replace")
+            status = resp.status_code
     except httpx.HTTPError as exc:
         return f"请求失败：{exc}"
 
-    body = resp.text
+    note_cap = f"（下载超过 {_MAX_DOWNLOAD_BYTES // 1024 // 1024}MB 已截断）" if capped else ""
     compact = _compact_json(body)
     if compact is None:
         compact = _compact_html(body)
     if compact is not None:
         return (
-            f"--- {url}（HTTP {resp.status_code}，原 {len(body)} 字符，已精简）---\n"
+            f"--- {url}（HTTP {status}，原 {len(body)} 字符，已精简）---\n"
             + compact
         )
 
@@ -150,6 +199,8 @@ def fetch(url: str) -> str:
     preview = body[:_DEFAULT_MAX_CHARS]
     if truncated:
         preview += (
-            f"\n…（内容过长，已截断至 {_DEFAULT_MAX_CHARS} 字符，共 {len(body)} 字符）"
+            f"\n…（内容过长，已截断至 {_DEFAULT_MAX_CHARS} 字符，共 {len(body)} 字符）{note_cap}"
         )
-    return f"--- {url}（HTTP {resp.status_code}，{len(body)} 字符）---\n{preview}"
+    elif capped:
+        preview += f"\n…{note_cap}"
+    return f"--- {url}（HTTP {status}，{len(body)} 字符）---\n{preview}"

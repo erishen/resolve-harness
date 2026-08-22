@@ -113,7 +113,15 @@ def _extract_usage(resp: Any) -> dict[str, int] | None:
 def usage_snapshot(router: Any) -> dict[str, int] | None:
     """Snapshot a router's cumulative token usage (None if it doesn't track)."""
     total = getattr(router, "total_usage", None)
-    return dict(total) if total else None
+    if not total:
+        return None
+    # 并行任务模式下 complete() 在 _usage_lock 下写 total_usage，读也需加锁，
+    # 否则可能读到中间状态（RuntimeError: dictionary changed size during iteration）。
+    lock = getattr(router, "_usage_lock", None)
+    if lock is not None:
+        with lock:
+            return dict(total)
+    return dict(total)
 
 
 def usage_diff(router: Any, baseline: dict[str, int] | None) -> dict[str, int] | None:
@@ -121,10 +129,17 @@ def usage_diff(router: Any, baseline: dict[str, int] | None) -> dict[str, int] |
     total = getattr(router, "total_usage", None)
     if not total or not baseline:
         return None
+    lock = getattr(router, "_usage_lock", None)
+    snap = dict(total) if lock is None else _locked_snapshot(router, lock, total)
     return {
-        k: max(0, int(total.get(k, 0)) - int(baseline.get(k, 0)))
+        k: max(0, int(snap.get(k, 0)) - int(baseline.get(k, 0)))
         for k in _USAGE_KEYS
     }
+
+
+def _locked_snapshot(router: Any, lock: Any, total: dict[str, int]) -> dict[str, int]:
+    with lock:
+        return dict(total)
 
 
 class LiteLLMRouter:

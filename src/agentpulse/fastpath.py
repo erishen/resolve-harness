@@ -13,13 +13,38 @@ from __future__ import annotations
 
 import ast
 import datetime
+import importlib
 import operator
+import os
 import re
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-from .generated_detectors import DETECTORS as _GENERATED_DETECTORS
+from . import generated_detectors as _GEN_MOD
+
+# 晋升的检测器合并进 generated_detectors.py 后，无需重启进程即可生效：
+# 按文件 mtime 懒重载模块，避免 promote 后到重启前出现「真空档」。
+_GEN_MTIME = 0.0
+_GENERATED_DETECTORS: list = list(_GEN_MOD.DETECTORS)
+
+
+def _generated_detectors() -> list:
+    """返回当前生效的晋升检测器列表；文件被改写（晋升）后下次调用即热重载。"""
+    global _GEN_MTIME, _GENERATED_DETECTORS
+    path = _GEN_MOD.__file__
+    try:
+        mtime = os.path.getmtime(path) if path else 0.0
+    except OSError:
+        mtime = 0.0
+    if mtime != _GEN_MTIME:
+        try:
+            importlib.reload(_GEN_MOD)
+            _GENERATED_DETECTORS = list(_GEN_MOD.DETECTORS)
+        except Exception:  # noqa: BLE001 - 重载失败则沿用旧列表
+            pass
+        _GEN_MTIME = mtime
+    return _GENERATED_DETECTORS
 
 # -- safe arithmetic -----------------------------------------------------------
 
@@ -465,7 +490,7 @@ def try_fast_answer(
             return result
 
     # promoted detectors (merged into src by the plugin-management UI)
-    for detect in _GENERATED_DETECTORS:
+    for detect in _generated_detectors():
         try:
             answer = detect(text)
         except Exception:  # noqa: BLE001

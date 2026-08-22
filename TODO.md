@@ -42,18 +42,19 @@
 - [ ] **晋升后进程内不 reload**：`promote_plugins` 删运行时文件但 `fastpath` 绑定在导入期，
       到重启前该模式既不在运行时也不在晋升档（真空档）。晋升后 `importlib.reload(generated_detectors)`。
       落点：`codegen.py` / `fastpath.py:22`。
-- [ ] **任务内存只增不减**：`record.queue` 写了从不读 + `_records` 永不淘汰 → 长服务内存泄漏。
-      删 `record.queue`，给 `_records` 加边界/LRU。落点：`tasks.py`。
-- [ ] **`announced_batches` 跨 turn 共享且不清**：同 `(step,call_id)` 碰撞会吞 `approval_request`
-      事件，集合无界。把 `thread_id` 纳入 key。落点：`graph/loop.py:209`。
-- [ ] **`usage_snapshot/diff` 读 `total_usage` 未加锁**：并行任务下与 `complete()` 写竞争。
-      读时也取 `self._usage_lock`。落点：`llm.py:113`。
-- [ ] **`fetch` 无下载上限 + SSRF**：整响应进内存可 OOM；无内网/回环 IP 过滤、跟随重定向。
-      加 `iter_bytes` 上限与地址校验。落点：`tools/http.py:125`。
-- [ ] **任务模式审批门**：维持「委托式自主执行」（沙箱隔离、无在线审批者），人工门只在交互式
-      chat 模式启用（设计决定，非 bug）。如未来要任务内审批，需先加审批者机制。
-- [ ] **测试/配置治理**：import-time `create_app()` 打开真实 `data/*.db`（`api.py:843`）；
-      任务测试共享 `/tmp` 沙箱/历史库泄漏（`test_tasks.py`）。移到 `tmp_path` / CLI 守卫。
+- [x] **任务内存只增不减**：删 `record.queue`（写了从不读），`_records` 加 `MAX_LIVE_RECORDS=200`
+       边界淘汰已结束记录（运行中永不淘汰），`get()` 回退 SQLite 历史。`tasks.py`
+- [x] **`announced_batches` 跨 turn 共享且不清**：改为每次 `agent_node` 进入时 `clear()`，
+       按 step 去重且集合有界。`graph/loop.py`
+- [x] **`usage_snapshot/diff` 读 `total_usage` 未加锁**：读时也取 `router._usage_lock`，
+       消除并行任务下「dict changed size during iteration」。`llm.py`
+- [x] **`fetch` 无下载上限 + SSRF**：改 `httpx.stream` + `_MAX_DOWNLOAD_BYTES=5MB` 流式截断；
+       `_is_safe_host` 拒绝私有/回环/链路本地/保留地址。`tools/http.py`
+- [x] **任务模式审批门**：维持「委托式自主执行」（沙箱隔离、无在线审批者），人工门只在交互式
+       chat 模式启用（设计决定，非 bug）。如未来要任务内审批，需先加审批者机制。
+- [x] **测试/配置治理**：三处 SQLite 仓储（`event_log`/`chat_history`/`long_term`）改**懒连接**，
+       import-time `create_app()` 不再触碰磁盘真实库；`test_tasks.py` 共享 `/tmp` 改为 `tmp_path`
+       隔离（autouse `_task_env`）。`event_log.py` / `chat_history.py` / `memory/long_term.py` / `tests/test_tasks.py`
 
 ## 近期已完成（本周期）
 

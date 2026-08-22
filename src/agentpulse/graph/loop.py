@@ -120,6 +120,8 @@ def build_loop(
     # -- nodes ---------------------------------------------------------------
 
     def agent_node(state: AgentState) -> dict[str, Any]:
+        # 每个新 step 重置审批批次去重集合：避免跨 turn 共享导致的事件漏发与无界增长。
+        announced_batches.clear()
         step = state.get("step", 0) + 1
         history = state.get("messages", []) or []
         if emit:
