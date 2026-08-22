@@ -52,6 +52,23 @@ export function setApiToken(token: string): void {
   else localStorage.removeItem(TOKEN_KEY)
 }
 
+// 首屏多个请求并发收到 401 时只弹一次输入框，大家共享同一个结果
+let tokenPromptInFlight: Promise<string | null> | null = null
+
+function askForToken(): Promise<string | null> {
+  if (!tokenPromptInFlight) {
+    tokenPromptInFlight = Promise.resolve(
+      window.prompt('后端已启用 API Token 校验，请输入 API Token：'),
+    ).finally(() => {
+      // 本轮全部处理完后释放，下次再遇到 401 可重新询问
+      setTimeout(() => {
+        tokenPromptInFlight = null
+      }, 0)
+    })
+  }
+  return tokenPromptInFlight
+}
+
 async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   const token = getApiToken()
@@ -62,8 +79,8 @@ async function request<T>(path: string, init?: RequestInit, retried = false): Pr
   })
   // 后端开启了 API_TOKEN 而本地没配 → 问一次并存下，重试本次请求
   if (res.status === 401 && !retried) {
-    const input = window.prompt('后端已启用 API Token 校验，请输入 API Token：')
-    if (input !== null) {
+    const input = await askForToken()
+    if (input !== null && input.trim()) {
       setApiToken(input)
       return request<T>(path, init, true)
     }
