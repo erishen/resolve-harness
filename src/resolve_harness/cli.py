@@ -9,7 +9,7 @@ from .harness import Harness
 
 def chat() -> None:
     harness = Harness()
-    print(f"resolve_harness v{_version()} — model: {harness.settings.model}")
+    print(f"Resolve Harness v{_version()} — model: {harness.settings.model}")
     print("Type your message, or 'exit' / Ctrl-D to quit.\n")
     try:
         while True:

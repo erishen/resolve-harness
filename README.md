@@ -1,4 +1,4 @@
-# resolve_harness
+# Resolve Harness
 
 A minimal Python AI Agent project skeleton: a **LangGraph** orchestration loop, **LiteLLM** unified model routing (Harness), **layered memory**, and a **deterministic fast path** (Fast Path: if it can be computed, the model never should). Dependencies and runtime are managed with `uv`.
 

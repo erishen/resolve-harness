@@ -1,4 +1,4 @@
-# resolve_harness 架构文档
+# Resolve Harness 架构文档
 
 > resolve_harness 是一个本地优先、单仓可控的 AI Agent Harness：FastAPI + LangGraph + LiteLLM 后端，React/TS 前端。
 > 核心设计哲学：**能用代码 100% 确定答案的就不调用模型**（Fast Path），复杂度按需升级。

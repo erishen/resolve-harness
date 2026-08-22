@@ -147,7 +147,7 @@ export default function App() {
       <section className="chat">
         <header className="chat-header">
           <span className={`status-dot ${online ? 'online' : ''}`} />
-          <span className="title">resolve_harness</span>
+          <span className="title">Resolve Harness</span>
           <span className="subtitle">
             {online ? '已连接' : '后端离线 — 请运行 `make dev`'}
           </span>

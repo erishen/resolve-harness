@@ -248,7 +248,7 @@ def create_app(
 ) -> FastAPI:
     """App factory; allows tests to inject a harness/runner with fakes."""
     h = harness or Harness()
-    app = FastAPI(title="resolve_harness", version="0.2.0")
+    app = FastAPI(title="Resolve Harness", version="0.2.0")
     app.state.harness = h
     app.state.runner = runner or TaskRunner(h)
     # .env LLM_MODEL baseline — clearing a default_model override falls back here
