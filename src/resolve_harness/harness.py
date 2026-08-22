@@ -33,6 +33,20 @@ from langgraph.types import Command
 def _default_sandbox_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "data" / "sandbox"
 
+
+def is_owned_sandbox(path: str | Path | None) -> bool:
+    """应用托管的沙箱根目录：默认项目沙箱（data/sandbox）与 ~/ResolveHarness。
+
+    这两处本来就是给 Agent 用的专属目录，不存在需要保护的用户个人文件，
+    因此不启用「原有文件」保护——所有文件正常显示、清空时全部删除。
+    用户把沙箱切到桌面/文稿等自选目录时才按基线保护原有文件。"""
+    if not path:
+        return False
+    p = Path(path).expanduser().resolve()
+    if p == _default_sandbox_dir().resolve():
+        return True
+    return p == (Path.home() / "ResolveHarness").resolve()
+
 from .config import Settings
 from .event_log import EventLog
 from .graph.loop import build_loop
@@ -165,6 +179,9 @@ class Harness:
             self._snapshot_sandbox_baseline()
         else:
             self._sandbox_baseline = set(sandbox_baseline)
+        # 托管目录（默认沙箱 / ~/ResolveHarness）不保护「原有文件」
+        if is_owned_sandbox(self.sandbox_dir):
+            self._sandbox_baseline = set()
 
         # Human-in-the-loop: any tool flagged require_approval routes its
         # calls through the graph's approval gate (interrupt + resume).
@@ -269,8 +286,11 @@ class Harness:
         self.tools.register(
             _make_run_script_tool(self.sandbox_dir), require_approval=True
         )
-        # 热切换后，新根目录里当下已有的文件即视为「原有文件」基线
+        # 热切换后，新根目录里当下已有的文件即视为「原有文件」基线；
+        # 但托管目录（默认沙箱 / ~/ResolveHarness）例外——全部视为可管理
         self._snapshot_sandbox_baseline()
+        if is_owned_sandbox(self.sandbox_dir):
+            self._sandbox_baseline = set()
 
     def _snapshot_sandbox_baseline(self) -> None:
         """记录当前沙箱根目录下已存在的相对路径，作为「原有文件」基线。"""

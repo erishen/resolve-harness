@@ -369,6 +369,39 @@ class TestSandbox:
         h.tools.execute("write_file", {"path": "out.txt", "content": "x"})
         assert h._sandbox_baseline == {"personal.txt"}
 
+    def test_owned_sandbox_roots_skip_baseline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """默认项目沙箱与 ~/ResolveHarness 是托管目录：不启用「原有文件」保护，
+        切过去之后所有文件正常显示、清空全删；切到自选目录才恢复基线快照。"""
+        from resolve_harness import harness as harness_mod
+        from resolve_harness.harness import Harness, is_owned_sandbox
+
+        # 默认项目沙箱恒为托管目录
+        assert is_owned_sandbox(harness_mod._default_sandbox_dir())
+
+        # 把 HOME 指到临时目录，构造 ~/ResolveHarness 场景
+        home = tmp_path / "home"
+        rh = home / "ResolveHarness"
+        rh.mkdir(parents=True)
+        (rh / "old_output.txt").write_text("previous-run", encoding="utf-8")
+        monkeypatch.setenv("HOME", str(home))
+
+        personal = tmp_path / "docs"  # 非托管的用户自选目录
+        personal.mkdir()
+        (personal / "private.txt").write_text("keep-me", encoding="utf-8")
+
+        h = Harness(sandbox_dir=str(personal))
+        assert h._sandbox_baseline == {"private.txt"}  # 自选目录：正常快照
+
+        # 切到 ~/ResolveHarness：基线清空 → old_output.txt 视为可管理文件
+        h.set_sandbox_dir(str(rh))
+        assert h._sandbox_baseline == set()
+
+        # 再切回自选目录：恢复快照行为
+        h.set_sandbox_dir(str(personal))
+        assert h._sandbox_baseline == {"private.txt"}
+
     def test_set_sandbox_dir_rebinds_fs_tools(self, tmp_path: Path) -> None:
         from resolve_harness.harness import Harness
 
