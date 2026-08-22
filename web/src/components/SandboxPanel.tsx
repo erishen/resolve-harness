@@ -109,6 +109,8 @@ export default function SandboxPanel() {
   const [loadingContent, setLoadingContent] = useState(false)
   const [error, setError] = useState('')
   const [sandboxDir, setSandboxDir] = useState<string | null>(null)
+  const [history, setHistory] = useState<string[]>([])
+  const [newDir, setNewDir] = useState('')
 
   // edit mode / rendered preview mode
   const [editing, setEditing] = useState(false)
@@ -123,6 +125,7 @@ export default function SandboxPanel() {
       const res = await api.sandbox()
       setFiles(res.files)
       setSandboxDir(res.sandbox_dir)
+      setHistory(res.sandbox_history ?? [])
       setError('')
     } catch {
       setError('无法读取沙箱（后端未连接？）')
@@ -213,6 +216,23 @@ export default function SandboxPanel() {
     }
   }, [files.length, load])
 
+  const applyLocation = useCallback(
+    async (path: string) => {
+      const trimmed = path.trim()
+      if (!trimmed) return
+      try {
+        const res = await api.sandboxSetLocation(trimmed)
+        setSandboxDir(res.sandbox_dir)
+        setHistory(res.sandbox_history)
+        setNewDir('')
+        await load()
+      } catch {
+        setError('切换沙箱目录失败')
+      }
+    },
+    [load],
+  )
+
   // 类型过滤：选中分组只显示匹配 kind 的文件；每类计数（全部分组计数随文件变化）。
   const filteredFiles = useMemo(() => {
     if (filter === 'all') return files
@@ -247,11 +267,48 @@ export default function SandboxPanel() {
           >
             🗑 清空
           </button>
-          <button type="button" className="ex-regen" onClick={() => void load()}>
-            🔄 刷新
-          </button>
-        </div>
-      </div>
+              <button type="button" className="ex-regen" onClick={() => void load()}>
+                🔄 刷新
+              </button>
+            </div>
+
+            <div className="sandbox-locbar">
+              <span className="sandbox-loc-label">沙箱位置</span>
+              <input
+                className="sandbox-loc-input"
+                value={newDir}
+                placeholder={sandboxDir ?? '输入目录绝对路径，如 /data/myproject'}
+                onChange={(e) => setNewDir(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newDir.trim()) void applyLocation(newDir.trim())
+                }}
+              />
+              <button
+                type="button"
+                className="ex-regen"
+                disabled={!newDir.trim()}
+                onClick={() => newDir.trim() && void applyLocation(newDir.trim())}
+              >
+                📁 切换
+              </button>
+            </div>
+            {history.length > 0 && (
+              <div className="sandbox-history">
+                <span className="sandbox-hist-label">已用目录：</span>
+                {history.map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    className={`sandbox-hist-chip${d === sandboxDir ? ' active' : ''}`}
+                    title={d}
+                    onClick={() => void applyLocation(d)}
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
       {error && <div className="error-banner">{error}</div>}
 

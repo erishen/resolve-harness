@@ -117,6 +117,8 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "agent_models": {},  # 任务模型：per-agent LLM override (empty = .env baseline)
     "default_model": "",  # 聊天模型：chat model override (empty = .env LLM_MODEL)
     "models": {},  # named model profiles {alias: {base_url, model, api_key_env}}
+    "sandbox_dir": "",  # 沙箱根目录（空 = 默认 data/sandbox）；可在沙箱 Tab 热更新
+    "sandbox_history": [],  # 记录已使用过的沙箱目录（最新在前），方便切回
 }
 
 
@@ -153,6 +155,12 @@ def _load_config() -> dict[str, Any]:
             if s:
                 cleaned[str(alias).strip()] = s
         cfg["models"] = cleaned
+    sd = raw.get("sandbox_dir")
+    if isinstance(sd, str) and sd.strip():
+        cfg["sandbox_dir"] = sd.strip()
+    hist = raw.get("sandbox_history")
+    if isinstance(hist, list):
+        cfg["sandbox_history"] = [str(x) for x in hist if isinstance(x, str) and x]
     return cfg
 
 
@@ -173,6 +181,12 @@ class ExampleDelete(BaseModel):
 
 class SandboxWrite(BaseModel):
     content: str = ""
+
+
+class SandboxLocation(BaseModel):
+    """Set the sandbox root directory at runtime (Sandbox tab hot-switch)."""
+
+    path: str = Field(min_length=1)
 
 
 class ApprovalDecision(BaseModel):
@@ -247,7 +261,8 @@ def create_app(
     chat_history: ChatHistoryStore | None = None,
 ) -> FastAPI:
     """App factory; allows tests to inject a harness/runner with fakes."""
-    h = harness or Harness()
+    _cfg = _load_config()
+    h = harness or Harness(sandbox_dir=_cfg.get("sandbox_dir") or None)
     app = FastAPI(title="Resolve Harness", version="0.2.0")
     app.state.harness = h
     app.state.runner = runner or TaskRunner(h)
@@ -258,7 +273,6 @@ def create_app(
         app.state.env_model = ""
     # apply persisted runtime config (parallel fan-out, replan rounds, steps,
     # per-agent LLM overrides, default model)
-    _cfg = _load_config()
     app.state.runner.parallel = _cfg["parallel"]
     app.state.runner.max_replan_rounds = _cfg["max_replan_rounds"]
     app.state.runner.max_steps = _cfg["max_steps"]
@@ -271,6 +285,8 @@ def create_app(
     app.state.chat_history = chat_history or ChatHistoryStore()
     # 事件日志：复用 harness 的连接（单一数据源）；无 harness 时自建
     app.state.event_log = getattr(app.state.harness, "_event_log", None) or EventLog()
+    # 已使用过的沙箱目录历史（沙箱 Tab 热切换用）
+    app.state.sandbox_history = _cfg.get("sandbox_history", [])
 
     app.add_middleware(
         CORSMiddleware,
@@ -784,7 +800,11 @@ def _register_sandbox_routes(app: FastAPI) -> None:
                 )
             # newest first — the agent just wrote something → it surfaces on top
             files.sort(key=lambda f: f["mtime"], reverse=True)
-        return {"files": files, "sandbox_dir": str(base) if base else None}
+        return {
+            "files": files,
+            "sandbox_dir": str(base) if base else None,
+            "sandbox_history": list(app.state.sandbox_history),
+        }
 
     @app.get("/api/sandbox/raw")
     def sandbox_raw(path: str = Query(min_length=1)) -> Response:
@@ -856,6 +876,27 @@ def _register_sandbox_routes(app: FastAPI) -> None:
                 except OSError:
                     pass
         return {"ok": True, "deleted": deleted}
+
+    @app.put("/api/sandbox/location")
+    def sandbox_set_location(req: SandboxLocation) -> dict[str, Any]:
+        """热切换沙箱根目录（沙箱 Tab）：更新 harness 并把重绑后的工具生效，
+        记录到历史（去重、最新在前）并持久化到 data/config.json。"""
+        h: Harness = app.state.harness
+        new_dir = Path(req.path).expanduser().resolve()
+        try:
+            h.set_sandbox_dir(str(new_dir))
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=f"无法创建/访问目录：{exc}")
+        history = [str(new_dir)] + [
+            p for p in app.state.sandbox_history if p != str(new_dir)
+        ]
+        history = history[:20]
+        app.state.sandbox_history = history
+        cfg = _load_config()
+        cfg["sandbox_dir"] = str(new_dir)
+        cfg["sandbox_history"] = history
+        _save_config(cfg)
+        return {"sandbox_dir": str(new_dir), "sandbox_history": history}
 
 
 app = create_app()

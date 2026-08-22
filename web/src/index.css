@@ -2143,6 +2143,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 12px 20px;
   border-bottom: 1px solid var(--border);
@@ -2168,6 +2169,66 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.sandbox-locbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-basis: 100%;
+  padding-top: 4px;
+}
+.sandbox-loc-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.sandbox-loc-input {
+  flex: 1;
+  min-width: 180px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.sandbox-loc-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.sandbox-history {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+.sandbox-hist-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.sandbox-hist-chip {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sandbox-hist-chip:hover {
+  border-color: var(--accent);
+}
+.sandbox-hist-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .sandbox-body {

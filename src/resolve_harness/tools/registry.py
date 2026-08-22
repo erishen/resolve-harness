@@ -111,6 +111,14 @@ class ToolRegistry:
             return decorator(func)
         return decorator
 
+    def unregister(self, name: str) -> bool:
+        """Remove a tool by name; returns True if it was registered.
+
+        Used to rebind sandbox-rooted tools (fs / run_script) when the
+        sandbox directory is changed at runtime.
+        """
+        return self._tools.pop(name, None) is not None
+
     # -- lookup & execution --------------------------------------------------
 
     def get(self, name: str) -> Tool | None:

@@ -234,6 +234,26 @@ class Harness:
             return func
         return decorator
 
+    # -- sandbox (hot-swappable root) ----------------------------------------
+
+    def set_sandbox_dir(self, new_dir: str) -> None:
+        """热更新沙箱根目录：更新 self.sandbox_dir，并把依赖根目录的工具
+        （fs 工具 + run_script）在 self.tools 里重绑到新目录。chat_tools 不含
+        fs 工具无需处理；任务的 per-task 子目录以 self.sandbox_dir 为基，自动跟随。"""
+        from .tools.builtin import _make_run_script_tool
+        from .tools.fs import make_fs_tools
+
+        path = Path(new_dir).expanduser().resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        self.sandbox_dir = str(path)
+        for name in ("read_file", "write_file", "list_files", "run_script"):
+            self.tools.unregister(name)
+        for fn in make_fs_tools(self.sandbox_dir):
+            self.tools.register(fn, require_approval=fn.__name__ == "write_file")
+        self.tools.register(
+            _make_run_script_tool(self.sandbox_dir), require_approval=True
+        )
+
     # -- the agent loop --------------------------------------------------------
 
     def _memory_hint(self, text: str) -> str:

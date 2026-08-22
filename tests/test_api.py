@@ -289,6 +289,73 @@ class TestSandbox:
         assert res.json()["deleted"] == 3
         assert c.get("/api/sandbox").json()["files"] == []
 
+    def test_set_sandbox_dir_rebinds_fs_tools(self, tmp_path: Path) -> None:
+        from resolve_harness.harness import Harness
+
+        dir_a = tmp_path / "a"
+        dir_b = tmp_path / "b"
+        h = Harness(sandbox_dir=str(dir_a))
+        h.tools.execute("write_file", {"path": "note.txt", "content": "in-a"})
+        assert (dir_a / "note.txt").read_text(encoding="utf-8") == "in-a"
+
+        # hot-switch the root directory
+        h.set_sandbox_dir(str(dir_b))
+        assert h.sandbox_dir == str(dir_b.resolve())
+        h.tools.execute("write_file", {"path": "note.txt", "content": "in-b"})
+        assert (dir_b / "note.txt").read_text(encoding="utf-8") == "in-b"
+        # the previous root is untouched by the new root
+        assert (dir_a / "note.txt").read_text(encoding="utf-8") == "in-a"
+        # fs + run_script tools stay registered after the rebind
+        for name in ("read_file", "write_file", "list_files", "run_script"):
+            assert h.tools.get(name) is not None, name
+
+    def test_sandbox_location_endpoint_records_history(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from resolve_harness.harness import Harness
+        import resolve_harness.api as _api
+
+        dir_a = tmp_path / "a"
+        dir_b = tmp_path / "b"
+        saved: dict = {}
+        monkeypatch.setattr("resolve_harness.api._save_config", lambda cfg: saved.update(cfg))
+        # isolate create_app's config read so the history starts empty
+        _real_cfg = _api._load_config()
+        monkeypatch.setattr(
+            "resolve_harness.api._load_config",
+            lambda: {**_real_cfg, "sandbox_history": []},
+        )
+
+        h = Harness(sandbox_dir=str(dir_a))
+        c = TestClient(create_app(harness=h))
+
+        res = c.put("/api/sandbox/location", json={"path": str(dir_b)})
+        assert res.status_code == 200
+        body = res.json()
+        assert body["sandbox_dir"] == str(dir_b.resolve())
+        assert body["sandbox_history"] == [str(dir_b.resolve())]
+        assert c.get("/api/sandbox").json()["sandbox_history"] == [str(dir_b.resolve())]
+        # a write after switching lands in the new root
+        c.put("/api/sandbox/content?path=switched.txt", json={"content": "x"})
+        assert (dir_b / "switched.txt").read_text(encoding="utf-8") == "x"
+        # persistence captured the new dir + history
+        assert saved["sandbox_dir"] == str(dir_b.resolve())
+        assert saved["sandbox_history"] == [str(dir_b.resolve())]
+
+        # switching back dedupes and puts the latest first
+        res2 = c.put("/api/sandbox/location", json={"path": str(dir_a)})
+        assert res2.json()["sandbox_history"] == [
+            str(dir_a.resolve()),
+            str(dir_b.resolve()),
+        ]
+
+    def test_sandbox_location_empty_path_rejected(self, tmp_path: Path) -> None:
+        from resolve_harness.harness import Harness
+
+        h = Harness(sandbox_dir=str(tmp_path / "a"))
+        c = TestClient(create_app(harness=h))
+        assert c.put("/api/sandbox/location", json={"path": ""}).status_code == 422
+
 
 class TestChatHistory:
     """Completed chat turns persist token usage; history is queryable."""

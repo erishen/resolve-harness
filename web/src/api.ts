@@ -140,7 +140,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ label, text }),
     }),
-  sandbox: () => request<{ files: SandboxFile[]; sandbox_dir: string | null }>('/sandbox'),
+  sandbox: () =>
+    request<{ files: SandboxFile[]; sandbox_dir: string | null; sandbox_history: string[] }>(
+      '/sandbox',
+    ),
+  sandboxSetLocation: (path: string) =>
+    request<{ sandbox_dir: string; sandbox_history: string[] }>('/sandbox/location', {
+      method: 'PUT',
+      body: JSON.stringify({ path }),
+    }),
   sandboxRawUrl: (path: string) => `/api/sandbox/raw?path=${encodeURIComponent(path)}`,
   sandboxFile: (path: string) =>
     request<{ path: string; content: string; size: number }>(
