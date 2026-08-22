@@ -8,9 +8,8 @@
      —— 口径：最新价=收盘价，涨跌幅=涨跌1÷前结算价。
 
 用法：
-  python scripts/fetch_shfe_futures.py                 # 默认：自动降级，取前 5，写 data/sandbox/futures.md
+  python scripts/fetch_shfe_futures.py                 # 默认：仅上期所官网公开数据，取前 5，写 data/sandbox/futures.md
   python scripts/fetch_shfe_futures.py --top 10 --out /tmp/f.md
-  python scripts/fetch_shfe_futures.py --source shfe    # 强制只用官网
   python scripts/fetch_shfe_futures.py --date 20260821
 """
 
@@ -113,7 +112,8 @@ def main() -> int:
     ap.add_argument("--top", type=int, default=5, help="取前 N 大涨幅合约（默认 5）")
     ap.add_argument("--out", type=str, default=None, help="输出 md 路径（默认 <repo>/data/sandbox/futures.md）")
     ap.add_argument("--date", type=str, default=_dt.datetime.now().strftime("%Y%m%d"), help="交易日 YYYYMMDD（仅官网源使用）")
-    ap.add_argument("--source", choices=["auto", "eastmoney", "shfe"], default="auto")
+    ap.add_argument("--source", choices=["auto", "eastmoney", "shfe"], default="auto",
+                    help="auto=仅上期所官网公开数据；eastmoney=第三方实时接口（显式指定，仅供研究）")
     args = ap.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -122,20 +122,24 @@ def main() -> int:
 
     source = None
     rows: list[dict] = []
-    if args.source in ("auto", "eastmoney"):
+    # 合规口径：auto 仅使用上期所官网主动公开披露的每日行情；
+    # 东方财富为第三方实时接口，仅在显式 --source eastmoney 时可用。
+    if args.source == "eastmoney":
+        # 第三方实时接口：仅在显式指定时使用，失败不降级（避免静默换源）
+        log.warning("--source eastmoney 为第三方实时接口，仅供本地研究，勿用于生产/分发")
         try:
             rows = fetch_eastmoney()
             source = "eastmoney"
-            log.info("东方财富实时接口成功，拿到 %d 条合约", len(rows))
-        except Exception as exc:  # noqa: BLE001 - 降级是预期内的
-            log.warning("东方财富接口不可用（%s），尝试上期所官网降级", exc)
-    if source is None:
+        except Exception as exc:  # noqa: BLE001
+            log.error("东方财富接口失败：%s", exc)
+            return 1
+    else:  # auto / shfe：仅上期所官网公开披露数据
         try:
             rows = fetch_shfe(args.date)
             source = "shfe"
             log.info("上期所官网接口成功，拿到 %d 条合约", len(rows))
         except Exception as exc:  # noqa: BLE001
-            log.error("两个数据源均失败：%s", exc)
+            log.error("上期所官网接口失败：%s", exc)
             return 1
 
     top = _top(rows, args.top)
