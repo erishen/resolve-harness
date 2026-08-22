@@ -69,6 +69,10 @@ function askForToken(): Promise<string | null> {
   return tokenPromptInFlight
 }
 
+// 每次页面加载，因「Token 无效」最多自动弹框一次（即使本机已存旧值）——
+// 平衡「输一次长期生效」与「存错值后仍有恢复入口」
+let promptedInvalidThisLoad = false
+
 async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
   // 记下本次实际使用的 Token：并发场景下另一个请求可能刚保存了新值
   const attempted = getApiToken()
@@ -84,15 +88,16 @@ async function request<T>(path: string, init?: RequestInit, retried = false): Pr
       // 同批其他请求刚存下了新 Token（本请求发出时还没有）→ 直接用它重试，不弹框
       return request<T>(path, init, true)
     }
-    if (!attempted) {
-      // 只有从未配置过 Token 才询问；输一次即长期生效（存 localStorage）
+    // 从未配置过 → 必须问；配置过但无效 → 本页加载也再给一次输入机会
+    if (!attempted || !promptedInvalidThisLoad) {
+      promptedInvalidThisLoad = true
       const input = await askForToken()
       if (input !== null && input.trim()) {
         setApiToken(input)
         return request<T>(path, init, true)
       }
     }
-    // 走到这里 = 已配置但仍 401：Token 不对。不再反复弹框，报错引导去设置页。
+    // 走到这里 = 用户取消，或本轮已给过机会仍 401：报错引导去设置页
   }
   if (!res.ok) {
     const body = await res.text().catch(() => '')
