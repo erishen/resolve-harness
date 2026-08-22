@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from agentpulse.api import create_app
 from agentpulse.harness import Harness
-from agentpulse.tasks import TaskRunner
+from agentpulse.tasks import TaskRecord, TaskRunner
 
 # TaskRunner persists successful tasks to a history file; the shared test path
 # must start empty for every test so history never leaks across tests.
@@ -36,6 +36,11 @@ class FakeRouter:
     def __init__(self, script: list[dict[str, Any]]) -> None:
         self.script = list(script)
         self.calls: list[dict[str, Any]] = []
+        # TaskRunner._task_model reads the .env baseline from the router.
+        self.env_model = "fake-model"
+
+    def resolve_model(self, model: str | None = None) -> str:
+        return model or self.env_model
 
     def complete(self, messages, tools=None, **kwargs):
         self.calls.append({"messages": messages, "tools": tools})
@@ -203,6 +208,40 @@ class TestOrchestration:
         from pathlib import Path
 
         assert Path("/tmp/agentpulse-sandbox-test/hello.txt").read_text() == "hi"
+
+    def test_cha_qihuo_run_script_flow(self) -> None:
+        """查期货示例：specialist 调用 run_script fetch_shfe_futures，脚本在「当前任务」
+        沙箱内抓取上期所行情并写出 futures.md，任务最终通过评估并交付。"""
+        import urllib.request
+        from pathlib import Path
+
+        try:
+            urllib.request.urlopen("https://www.shfe.com.cn", timeout=5)
+        except Exception:
+            pytest.skip("no network to shfe.com.cn")
+
+        script = [
+            plan_json(("查期货", "调用 run_script 运行 fetch_shfe_futures 获取上期所前5大涨幅合约")),
+            tool_call("run_script", {"name": "fetch_shfe_futures"}),
+            answer("已运行 run_script 获取行情，详见 futures.md"),
+            verdict_json(True, 95),
+            answer("# 交付\n上期所前5大涨幅合约见 futures.md"),
+        ]
+        h = make_harness(script)
+        runner = TaskRunner(h, parallel=1, history_path="/tmp/agentpulse-task-hist-test.db", codegen=False, max_steps=8)
+        task_id = runner.start("获取上海期货交易所每日行情并保存为 futures.md")
+        events = drain(task_id, runner)
+        results = [e["data"]["content"] for e in events if e["type"] == "tool_result"]
+        assert any("退出码 0" in r and "涨幅" in r for r in results), results
+        # run_script 通过子进程落盘，必须广播 produced_file 事件供完成界面列出
+        produced = [e for e in events if e["type"] == "produced_file"]
+        assert produced, "缺少 produced_file 事件"
+        assert produced[0]["data"]["path"] == "futures.md"
+        # futures.md 必须落在「当前任务」沙箱内（而非全局沙箱）
+        md = Path("/tmp/agentpulse-sandbox-test") / "tasks" / task_id / "futures.md"
+        assert md.exists(), list(Path("/tmp/agentpulse-sandbox-test/tasks").glob(f"{task_id}/*"))
+        assert "涨幅" in md.read_text(encoding="utf-8")
+        assert runner.get(task_id)["status"] == "done"
 
     def test_late_subscriber_gets_full_history(self) -> None:
         script = [
@@ -534,3 +573,70 @@ class TestSubtasksFastPath:
         normal = next(d for d in dones if not d.get("fast"))
         assert "报告" in normal["title"]
         assert types_of(events)[-1] == "task_end"
+
+
+class TestStop:
+    """后端必须能真正中止运行中的任务，而不能只断开前端 SSE。"""
+
+    def test_run_aborts_at_checkpoint_when_stop_requested(self) -> None:
+        """stop_requested 置位后，_run 在安全点立即中止并发出 task_stopped。"""
+        h = make_harness([plan_json(("a", "b"))])
+        runner = TaskRunner(h, history_path=_SHARED_HISTORY, codegen=False)
+        task_id = "stop-unit"
+        record = TaskRecord(task_id, "非算术目标", "fake-model")
+        runner._records[task_id] = record
+        record.stop_requested = True
+        # 同步跑 _run（不经过 start 的线程），确定性验证检查点
+        runner._run(task_id)
+        assert record.status == "stopped"
+        assert "task_stopped" in types_of(record.events)
+
+    def test_stop_method_returns_bool(self) -> None:
+        h = make_harness([plan_json(("a", "b"))])
+        runner = TaskRunner(h, history_path=_SHARED_HISTORY, codegen=False)
+        assert runner.stop("unknown") is False
+        rec = TaskRecord("r1", "g", "m")
+        runner._records["r1"] = rec
+        assert runner.stop("r1") is True
+        assert rec.stop_requested is True
+        # 已停止的任务无法再次停止
+        rec.status = "stopped"
+        assert runner.stop("r1") is False
+
+    def test_stop_endpoint(self) -> None:
+        client = TestClient(
+            create_app(
+                harness=make_harness([plan_json(("a", "b"))]),
+                runner=TaskRunner(
+                    make_harness([]), parallel=1, history_path=_SHARED_HISTORY, codegen=False
+                ),
+            )
+        )
+        runner = client.app.state.runner
+        rec = TaskRecord("s1", "g", "m")
+        runner._records["s1"] = rec
+        r = client.post("/api/tasks/s1/stop")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        # 未知任务 -> ok False
+        assert client.post("/api/tasks/nope/stop").json()["ok"] is False
+
+    def test_execute_plan_stops_between_subtasks(self) -> None:
+        """串行执行中途被停止：检查点（子任务之间）生效，发出 task_stopped。"""
+        script = [
+            plan_json(("甲", "做算术报告"), ("乙", "写一句总结")),
+            tool_call("add", {"a": 1, "b": 1}),
+            answer("结果 2"),
+            verdict_json(True, 90),
+            answer("# 交付"),
+        ]
+        h = make_harness(script)
+        runner = TaskRunner(h, parallel=1, history_path=_SHARED_HISTORY, codegen=False)
+        task_id = "stop-partial"
+        rec = TaskRecord(task_id, "目标", "fake-model")
+        runner._records[task_id] = rec
+        # 进入 replan 循环前即置位停止：_run 应在检查点中止，不执行任何子任务
+        rec.stop_requested = True
+        runner._run(task_id)
+        assert rec.status == "stopped"
+        assert "task_stopped" in types_of(rec.events)

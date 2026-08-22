@@ -29,6 +29,7 @@ from typing import Any, Callable
 from langgraph.types import Command
 
 from .config import Settings
+from .event_log import EventLog
 from .graph.loop import build_loop
 from .llm import LiteLLMRouter
 from .memory import LongTermMemory, ShortTermMemory
@@ -161,7 +162,12 @@ class Harness:
             system_prompt=self.settings.system_prompt,
             verbose=self.settings.verbose,
             needs_approval=self._needs_approval,
+            emit=self._on_loop_event,
         )
+        # 事件日志：聊天循环事件实时落库（scope="chat", ref=turn thread_id）
+        self._event_log = EventLog()
+        # 当前 turn 的日志引用，由 run() 设置
+        self._log_ref: str | None = None
         # per-turn diagnostics, filled by run()
         self.last_trace: list[dict[str, Any]] = []
         self.last_steps: int = 0
@@ -171,6 +177,10 @@ class Harness:
         self.pending_approval: dict[str, Any] | None = None
 
     # -- tool registration (delegated) ---------------------------------------
+
+    def _on_loop_event(self, event_type: str, data: dict[str, Any]) -> None:
+        """Loop emit sink：把单循环事件持久化到事件日志（scope="chat"）。"""
+        self._event_log.append("chat", self._log_ref or "?", event_type, data)
 
     def register_tool(
         self,
@@ -197,6 +207,7 @@ class Harness:
                     system_prompt=self.settings.system_prompt,
                     verbose=self.settings.verbose,
                     needs_approval=self._needs_approval,
+                    emit=self._on_loop_event,
                 )
 
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -236,6 +247,7 @@ class Harness:
         system_prompt: str | None = None,
         max_steps: int | None = None,
         session_history: bool = True,
+        model: str | None = None,
     ) -> str:
         """Send one user message through the loop and return the final reply.
 
@@ -243,6 +255,11 @@ class Harness:
         facts the agent stores with `remember` persist via long-term memory.
         After the call, `self.last_trace` holds the tool-call events of this
         turn (for UI display), and `self.last_steps` the iteration count.
+
+        `model`: session-level model override for THIS turn (alias or model
+        name). None falls back to the loop default (chat model). The override
+        reaches every agent-node LLM call of this turn via the graph state —
+        the same resolution as the router default otherwise applies.
 
         Deterministic queries (arithmetic, current time) short-circuit through
         the fast path: answered by code, no LLM round-trip.
@@ -265,6 +282,10 @@ class Harness:
 
         fast = try_fast_answer(text, sandbox_dir=self.sandbox_dir)
         if fast is not None:
+            self._log_ref = uuid.uuid4().hex[:12]
+            self._event_log.append(
+                "chat", self._log_ref, "fastpath", {"method": fast.method, "answer": fast.answer[:200]}
+            )
             self.short_term.add("user", text)
             self.short_term.add("assistant", fast.answer)
             self.last_trace = [
@@ -277,8 +298,12 @@ class Harness:
         # codegen: let the model write a detector once; persist on success
         from .codegen import codegen_solve
 
-        gen_answer = codegen_solve(self.router, text)
+        gen_answer = codegen_solve(self.router, text, model=model)
         if gen_answer is not None:
+            self._log_ref = uuid.uuid4().hex[:12]
+            self._event_log.append(
+                "chat", self._log_ref, "codegen", {"answer": gen_answer[:200]}
+            )
             self.short_term.add("user", text)
             self.short_term.add("assistant", gen_answer)
             self.last_trace = [
@@ -311,10 +336,13 @@ class Harness:
             "messages": history,
             "step": 0,
             "max_steps": max(1, limit),
+            "model": model,  # 会话级模型覆盖，agent 节点优先使用
         }
         # A fresh thread per turn: short-term memory stays the single source
         # of history, so the checkpointer never accumulates it twice.
         thread_id = uuid.uuid4().hex
+        # 事件日志引用：本 turn 的循环事件全部归属该 ref（可 replay）
+        self._log_ref = thread_id
         if self._needs_approval is not None:
             final_state = self._loop.invoke(
                 initial_state, {"configurable": {"thread_id": thread_id}}

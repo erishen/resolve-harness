@@ -101,6 +101,29 @@ function serializeConfig(
   return stableStringify({ parallel, maxReplan, maxSteps, agentModels, defaultModel, models })
 }
 
+/** 字段级基准：上次成功保存后的各字段原始值，用于只提交「真正变化」的字段。 */
+interface SavedValues {
+  parallel: number
+  replan: number
+  maxSteps: number
+  agentModels: Record<string, string>
+  defaultModel: string
+  models: Record<string, ModelProfile>
+}
+
+function toVals(c: AppConfig): SavedValues {
+  return {
+    parallel: c.parallel,
+    replan: c.max_replan_rounds,
+    maxSteps: c.max_steps,
+    agentModels: c.agent_models ?? {},
+    defaultModel: c.default_model ?? '',
+    models: c.models ?? {},
+  }
+}
+
+const jsonSame = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
+
 /** 失焦：空串补回下限。 */
 function numOnBlur(setter: (v: string) => void, current: string, min: number) {
   return () => {
@@ -108,7 +131,7 @@ function numOnBlur(setter: (v: string) => void, current: string, min: number) {
   }
 }
 
-/** 设置 Tab：模型库（baseURL + Key + 模型名）+ 默认/各 Agent 模型 + 运行参数。
+/** 设置 Tab：模型库（baseURL + Key + 模型名）+ 聊天模型 + 任务模型（各 Agent 角色）+ 运行参数。
  * @param onModelChange 任意配置保存成功后触发，通知外层刷新顶栏「当前模型」tag。 */
 export default function SettingsPanel({ onModelChange }: { onModelChange?: () => void }) {
   const [cfg, setCfg] = useState<AppConfig | null>(null)
@@ -124,6 +147,7 @@ export default function SettingsPanel({ onModelChange }: { onModelChange?: () =>
   const [error, setError] = useState('')
   // 上次成功保存到后端的完整配置（序列化），用于判断是否需要触发自动保存。
   const lastSavedRef = useRef<string | null>(null)
+  const lastValsRef = useRef<SavedValues | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -150,6 +174,7 @@ export default function SettingsPanel({ onModelChange }: { onModelChange?: () =>
           c.default_model ?? '',
           c.models ?? {},
         )
+        lastValsRef.current = toVals(c)
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
       }
@@ -159,8 +184,8 @@ export default function SettingsPanel({ onModelChange }: { onModelChange?: () =>
     }
   }, [])
 
-  // 即时自动保存：任一设置项变化后防抖 600ms 提交全量配置；与 lastSavedRef
-  // 比对，未变化则不发请求。未加载完成（cfg 为 null）不触发。
+  // 即时自动保存：任一设置项变化后防抖 600ms，只提交「相对上次保存真正变化」
+  // 的字段（未变字段后端保持磁盘现值，避免 UI 全量提交覆盖外部修改）。
   useEffect(() => {
     if (!cfg) return
     const models = buildModels(rows)
@@ -177,14 +202,21 @@ export default function SettingsPanel({ onModelChange }: { onModelChange?: () =>
       ;(async () => {
         setAutoSaving(true)
         try {
-          const c = await api.setConfig(
-            clampNum(Number(parallel) || 4, 1, 16),
-            clampNum(Number(replan) || 1, 0, 5),
-            clampNum(Number(maxSteps) || 10, 1, 50),
-            agentModels,
-            defaultModel,
-            models,
-          )
+          const base = lastValsRef.current
+          const curParallel = clampNum(Number(parallel) || 4, 1, 16)
+          const curReplan = clampNum(Number(replan) || 1, 0, 5)
+          const curMaxSteps = clampNum(Number(maxSteps) || 10, 1, 50)
+          const curModels = buildModels(rows)
+          const p = base && jsonSame(curParallel, base.parallel) ? null : curParallel
+          const r = base && jsonSame(curReplan, base.replan) ? null : curReplan
+          const s = base && jsonSame(curMaxSteps, base.maxSteps) ? null : curMaxSteps
+          const am = base && jsonSame(agentModels, base.agentModels) ? undefined : agentModels
+          const dm = base && jsonSame(defaultModel, base.defaultModel) ? undefined : defaultModel
+          const m = base && jsonSame(curModels, base.models) ? undefined : curModels
+          if (p === null && r === null && s === null && am === undefined && dm === undefined && m === undefined) {
+            return // 理论不可达（candidate 已拦截），防御性兜底
+          }
+          const c = await api.setConfig(p, r, s, am, dm, m)
           setCfg(c)
           lastSavedRef.current = serializeConfig(
             c.parallel,
@@ -194,8 +226,9 @@ export default function SettingsPanel({ onModelChange }: { onModelChange?: () =>
             c.default_model ?? '',
             c.models ?? {},
           )
+          lastValsRef.current = toVals(c)
           setMsg('已自动保存 · 下一任务起生效')
-          // 默认模型 / 模型库可能已变化，通知外层刷新顶栏当前模型 tag。
+          // 聊天模型 / 模型库可能已变化，通知外层刷新顶栏当前模型 tag。
           onModelChange?.()
         } catch (e) {
           const raw = e instanceof Error ? e.message : String(e)
@@ -304,12 +337,12 @@ export default function SettingsPanel({ onModelChange }: { onModelChange?: () =>
       </section>
 
       <section className="settings-section">
-        <div className="settings-section-title">默认模型</div>
+        <div className="settings-section-title">聊天模型</div>
         <label className="settings-row">
           <span className="settings-label">
-            全局默认模型
+            聊天模型
             <span className="settings-hint">
-              当前生效：<code>{cfg.active_model}</code>
+              聊天当前生效：<code>{cfg.active_model}</code>
               {defaultModel ? '（来自配置覆盖）' : '（.env LLM_MODEL）'}
             </span>
           </span>
@@ -329,7 +362,7 @@ export default function SettingsPanel({ onModelChange }: { onModelChange?: () =>
       </section>
 
       <section className="settings-section">
-        <div className="settings-section-title">Agent 独立模型（空 = 跟随默认模型）</div>
+        <div className="settings-section-title">任务模型（空 = 跟随 .env 基线，与聊天模型独立）</div>
         {AGENT_ROLES.map((a) => (
           <label key={a.key} className="settings-row">
             <span className="settings-label">
@@ -343,7 +376,7 @@ export default function SettingsPanel({ onModelChange }: { onModelChange?: () =>
                 setAgentModels((prev) => ({ ...prev, [a.key]: e.target.value }))
               }
             >
-              <option value="">默认（跟随默认模型）</option>
+              <option value="">默认（跟随 .env 基线）</option>
               {aliases.map((x) => (
                 <option key={x} value={x}>
                   {x}

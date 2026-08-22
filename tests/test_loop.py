@@ -25,6 +25,11 @@ class FakeRouter:
         self.script = list(script)
         self.seen: list[list[dict[str, Any]]] = []
         self.tools_seen: list[Any] = []
+        # TaskRunner._task_model reads the .env baseline from the router.
+        self.env_model = "fake-model"
+
+    def resolve_model(self, model: str | None = None) -> str:
+        return model or self.env_model
 
     def complete(self, messages, tools=None, **kwargs):
         self.seen.append(messages)

@@ -169,13 +169,12 @@ export default function AgentsPanel({ onGoTools, onGoPlugins, onGoSettings }: Ag
       ? e.label.replace('限轮次', `限 ${replan} 轮`)
       : e.label
 
-  // 解析某角色实际采用的模型：优先该角色的独享配置，否则默认模型，再否则 .env 基线。
+  // 解析某角色实际采用的模型：优先该角色的独立配置，否则 .env 基线（与聊天模型独立）。
   // 若标识命中模型库别名则取具体 model 名，否则原样展示（已是具体模型名）。
   const resolveModel = (phase: string): { name: string; override: boolean } | null => {
     if (!config) return null
     const id =
       config.agent_models?.[phase] ||
-      config.default_model ||
       config.env_model?.model ||
       ''
     if (!id) return { name: '未配置', override: false }

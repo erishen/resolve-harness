@@ -15,6 +15,7 @@ import re
 import threading
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import litellm
@@ -34,6 +35,52 @@ _USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
 # 窗口自行恢复，而不是一次失败就中断整轮。
 _RATE_LIMIT_MAX_RETRIES = 3
 _RATE_LIMIT_BACKOFF = 1.5  # 秒，按 2 的幂递增：1.5 / 3 / 6 …
+
+# 低配额网关（如 sensenova.cn 这类 RPM 极低的 OpenAI 兼容端点）：默认策略救
+# 不回来，自动升级为更多重试 + 更长退避。
+_LOW_QUOTA_HOSTS = ("sensenova",)
+
+# 可重试的临时故障：配额耗尽（429）、上游 5xx（如 Cloudflare 520，retryable）、
+# 网络超时。这些失败重试通常能自愈；4xx（参数/鉴权错误）绝不重试。
+_RETRYABLE_EXC = (
+    litellm.RateLimitError,
+    litellm.InternalServerError,
+    litellm.Timeout,
+)
+
+
+def _retry_wait(exc: Exception, attempt: int, policy: "RetryPolicy") -> float:
+    """退避时长：优先采用上游给出的 retry_after（如 Cloudflare 520 的 60s），
+    clamp 到 [backoff_base, 15s] 避免单次等待卡死；否则指数退避。"""
+    ra = getattr(exc, "retry_after", None)
+    if ra is None:
+        m = re.search(r"retry_after['\"]?\s*[:=]\s*(\d+)", str(exc))
+        ra = int(m.group(1)) if m else None
+    try:
+        ra = float(ra)
+    except (TypeError, ValueError):
+        ra = None
+    if ra and ra > 0:
+        return min(max(ra, policy.backoff_base), 15.0)
+    return policy.wait(attempt)
+
+
+@dataclass
+class RetryPolicy:
+    """Provider-scoped retry policy（借鉴 dsh `llm-retry`：重试是横切关注点）。
+
+    `retry_on` 列出需要退避重试的异常类型；`complete()` 按当前 api_base
+    匹配策略（低配额网关自动升级），其余情况用 router 默认策略。
+    """
+
+    max_retries: int = _RATE_LIMIT_MAX_RETRIES
+    backoff_base: float = _RATE_LIMIT_BACKOFF
+    enabled: bool = True
+    retry_on: tuple[type[BaseException], ...] = _RETRYABLE_EXC
+
+    def wait(self, attempt: int) -> float:
+        return self.backoff_base * (2 ** attempt)
+
 
 # 合法环境变量名：字母/下划线开头，仅含字母、数字、下划线。
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -83,8 +130,18 @@ def usage_diff(router: Any, baseline: dict[str, int] | None) -> dict[str, int] |
 class LiteLLMRouter:
     """Thin wrapper around litellm.completion with retry + JSON-ish tool calls."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        retry_policy: RetryPolicy | None = None,
+    ) -> None:
         self.settings = settings
+        # .env 基线模型名（LLM_MODEL）。「聊天模型」覆盖（default_model）只改
+        # settings.model；任务模型空值时跟随的是这个基线，互不干扰。
+        self.env_model = settings.model
+        # 默认重试策略；低配额网关由 _policy_for 自动升级。
+        self.retry_policy = retry_policy or RetryPolicy()
         # Token usage accounting: last call + cumulative (thread-safe, since
         # task specialists may call the router concurrently).
         self.last_usage: dict[str, int] | None = None
@@ -130,7 +187,36 @@ class LiteLLMRouter:
             model_name = "openai/" + model_name
         return model_name, base, key
 
+    def _policy_for(self, api_base: str | None) -> RetryPolicy:
+        """按 api_base 选择重试策略：低配额网关自动升级（更多重试、更长退避），
+        其余情况用 router 默认策略。"""
+        base = (api_base or "").lower()
+        if any(host in base for host in _LOW_QUOTA_HOSTS):
+            return RetryPolicy(max_retries=4, backoff_base=2.0)
+        return self.retry_policy
+
     # -- public API ------------------------------------------------------
+
+    @staticmethod
+    def _ensure_user_trailing(
+        messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """OpenAI 兼容网关（agnes 等）不允许对话以 `tool` 消息结尾，否则报
+        'No user query found in messages'。结尾是 tool 时补一条 user 消息，
+        让请求落在 user 轮次上。标准 OpenAI / Anthropic / DeepSeek 走官方
+        前缀、无自定义 base，不会触发此垫片。"""
+        if messages and messages[-1].get("role") == "tool":
+            return [*messages, {"role": "user", "content": "（请基于上面的工具返回继续）"}]
+        return messages
+
+    def resolve_model(self, model: str | None = None) -> str:
+        """Resolve a model alias (or the router default) to the concrete
+        litellm model name — exactly the same resolution `complete()` uses.
+
+        Used by the UI/task records to display the model that will actually
+        be called (alias -> profile model, with provider-prefix fallback).
+        """
+        return self._resolve(model)[0]
 
     def complete(
         self,
@@ -149,9 +235,14 @@ class LiteLLMRouter:
         (resolved via set_models) or a raw litellm model string.
         """
         model_name, api_base, api_key = self._resolve(model)
+        policy = self._policy_for(api_base)
+        out_messages = [dict(m) for m in messages]
+        # 自定义兼容网关（agnes 等）拒绝以 tool 结尾的请求，补一条 user 收尾。
+        if api_base:
+            out_messages = self._ensure_user_trailing(out_messages)
         kwargs: dict[str, Any] = {
             "model": model_name,
-            "messages": [dict(m) for m in messages],
+            "messages": out_messages,
             "temperature": self.settings.temperature if temperature is None else temperature,
             "max_tokens": self.settings.max_tokens if max_tokens is None else max_tokens,
         }
@@ -165,22 +256,22 @@ class LiteLLMRouter:
         kwargs["num_retries"] = 0
 
         last_exc: Exception | None = None
-        for attempt in range(_RATE_LIMIT_MAX_RETRIES + 1):
+        for attempt in range(policy.max_retries + 1):
             try:
                 resp = litellm.completion(**kwargs)
                 break
-            except litellm.RateLimitError as exc:  # 配额耗尽：退避后重试
+            except policy.retry_on as exc:  # 配额/5xx/超时：退避后重试
                 last_exc = exc
-                if attempt < _RATE_LIMIT_MAX_RETRIES:
-                    wait = _RATE_LIMIT_BACKOFF * (2 ** attempt)
+                if attempt < policy.max_retries:
+                    wait = _retry_wait(exc, attempt, policy)
                     logger.warning(
-                        "LLM 速率限制（%s，第 %d/%d 次），%.1fs 后重试：%s",
-                        model_name, attempt + 1, _RATE_LIMIT_MAX_RETRIES, wait, exc,
+                        "LLM 调用失败（%s，第 %d/%d 次），%.1fs 后重试：%s",
+                        model_name, attempt + 1, policy.max_retries, wait, exc,
                     )
                     time.sleep(wait)
                     continue
                 raise LLMError(
-                    f"LLM call failed ({model_name}): 速率限制重试耗尽 - {exc}"
+                    f"LLM call failed ({model_name}): 重试耗尽 - {exc}"
                 ) from exc
             except Exception as exc:  # noqa: BLE001 - surface other provider errors uniformly
                 raise LLMError(f"LLM call failed ({model_name}): {exc}") from exc

@@ -7,6 +7,7 @@ import pytest
 from agentpulse.memory import LongTermMemory
 from agentpulse.tools import http as http_mod
 from agentpulse.tools.builtin import register_builtins
+import agentpulse.tools.builtin as builtin_mod
 from agentpulse.tools.registry import ToolError, ToolRegistry
 
 
@@ -167,15 +168,16 @@ class TestFetch:
     def test_compacts_oversized_json(self, registry, monkeypatch) -> None:
         import json as _json
 
+        # 列表远大于 _MAX_RECORDS，验证精简后保留的条数受上限约束
         big = _json.dumps(
-            {"jobs": [{"title": f"job {i}", "desc": "y" * 500} for i in range(50)]}
+            {"jobs": [{"title": f"job {i}", "desc": "y" * 500} for i in range(200)]}
         )
         monkeypatch.setattr(http_mod.httpx, "get", lambda url, **kw: self._Resp(big))
         result = registry.execute("fetch", {"url": "https://example.com/jobs"})
         assert "已精简" in result
         body = result.split("---\n", 1)[1]
         data = _json.loads(body)  # still valid JSON — never byte-sliced
-        assert len(data["jobs"]) == 3
+        assert len(data["jobs"]) == http_mod._MAX_RECORDS
         assert data["jobs"][0]["desc"].endswith("…")  # long fields truncated
 
     def test_compacts_oversized_html(self, registry, monkeypatch) -> None:
@@ -202,3 +204,78 @@ class TestFetch:
         monkeypatch.setattr(http_mod.httpx, "get", fake_get)
         result = registry.execute("fetch", {"url": "https://unreachable.invalid"})
         assert "请求失败" in result
+
+
+class TestRunScript:
+    def test_allows_allowlisted_and_writes_sandbox(self, tmp_path) -> None:
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        (scripts / "demo.py").write_text(
+            "import sys\n"
+            "from pathlib import Path\n"
+            "out = 'out.txt'\n"
+            "if '--out' in sys.argv:\n"
+            "    out = sys.argv[sys.argv.index('--out') + 1]\n"
+            "Path(out).write_text('ran:' + ' '.join(sys.argv[1:]))\n"
+        )
+        saved = builtin_mod.RUN_SCRIPT_ALLOWLIST
+        builtin_mod.RUN_SCRIPT_ALLOWLIST = frozenset({"demo"})
+        try:
+            fn = builtin_mod._make_run_script_tool(str(tmp_path), scripts_dir=str(scripts))
+            out = fn("demo", "--out futures.md")
+            assert "退出码 0" in out
+            assert (tmp_path / "futures.md").read_text(encoding="utf-8") == "ran:--out futures.md"
+            # 白名单外脚本被拒绝
+            assert "不允许的脚本" in fn("evil")
+        finally:
+            builtin_mod.RUN_SCRIPT_ALLOWLIST = saved
+
+    def test_no_sandbox_unavailable(self) -> None:
+        fn = builtin_mod._make_run_script_tool(None)
+        assert "未配置沙箱" in fn("fetch_shfe_futures")
+
+    def test_out_argument_confined_to_sandbox(self, tmp_path) -> None:
+        """模型传入的绝对/越界 --out 必须被忽略，产出始终落在沙箱内 futures.md。"""
+        import os
+
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        (scripts / "demo.py").write_text(
+            "import sys\n"
+            "from pathlib import Path\n"
+            "out = 'out.txt'\n"
+            "if '--out' in sys.argv:\n"
+            "    out = sys.argv[sys.argv.index('--out') + 1]\n"
+            "Path(out).write_text('ran:' + ' '.join(sys.argv[1:]))\n"
+        )
+        saved = builtin_mod.RUN_SCRIPT_ALLOWLIST
+        builtin_mod.RUN_SCRIPT_ALLOWLIST = frozenset({"demo"})
+        evil = "/tmp/agentpulse_run_script_evil_probe"
+        if os.path.exists(evil):
+            os.remove(evil)
+        try:
+            fn = builtin_mod._make_run_script_tool(str(tmp_path), scripts_dir=str(scripts))
+            # 尝试逃出沙箱：绝对路径
+            out = fn("demo", f"--out {evil}")
+            assert "退出码 0" in out
+            # 沙箱内固定名落地
+            assert (tmp_path / "futures.md").read_text(encoding="utf-8") == "ran:--out futures.md"
+            # 越界路径绝不应被创建
+            assert not os.path.exists(evil), "run_script 把文件写到了沙箱外！"
+        finally:
+            builtin_mod.RUN_SCRIPT_ALLOWLIST = saved
+            if os.path.exists(evil):
+                os.remove(evil)
+
+    def test_real_fetch_shfe_when_network(self, tmp_path) -> None:
+        import urllib.request
+
+        try:
+            urllib.request.urlopen("https://www.shfe.com.cn", timeout=5)
+        except Exception:
+            pytest.skip("no network to shfe.com.cn")
+        fn = builtin_mod._make_run_script_tool(str(tmp_path))
+        out = fn("fetch_shfe_futures")
+        assert "退出码 0" in out
+        md = (tmp_path / "futures.md").read_text(encoding="utf-8")
+        assert "涨幅" in md

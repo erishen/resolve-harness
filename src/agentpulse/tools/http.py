@@ -21,7 +21,10 @@ import httpx
 _DEFAULT_MAX_CHARS = 20000
 _TIMEOUT_SECONDS = 8.0
 _UA = "agentpulse-fetch/0.1"
-_MAX_RECORDS = 3  # records kept when compacting a huge JSON list
+# 巨型 JSON 列表精简时保留的记录数。金融/行情类接口（如上期所每日行情
+# 含数百条合约）需要足够多的行才能让模型做「按涨跌幅取前 N」这类排序，
+# 3 条太少会直接丢失排名信息；60 条约 20KB，仍在上下文可控范围内。
+_MAX_RECORDS = 60  # records kept when compacting a huge JSON list
 _FIELD_LIMIT = 200  # per-string length cap inside a compacted record
 
 

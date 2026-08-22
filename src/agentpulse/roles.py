@@ -25,8 +25,9 @@ from .llm import LiteLLMRouter
 def extract_json(text: str) -> dict[str, Any] | None:
     """Best-effort JSON object extraction from model output.
 
-    Handles ```json fences, stray prose around the object, and trailing
-    commas (common LLM mistakes). Returns None when nothing parseable.
+    Handles ```json fences (including unclosed ones), stray prose around the
+    object, trailing commas, and JSON followed by prose (raw_decode fallback).
+    Returns None when nothing parseable.
     """
     if not text:
         return None
@@ -36,6 +37,9 @@ def extract_json(text: str) -> dict[str, Any] | None:
     fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     if fenced:
         text = fenced.group(1).strip()
+    else:
+        # 围栏未闭合（模型只写了 ```json 没写结尾 ```）：剥掉前缀再解析
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.DOTALL).strip()
 
     # first '{' ... last '}' as the candidate object
     start, end = text.find("{"), text.rfind("}")
@@ -50,6 +54,15 @@ def extract_json(text: str) -> dict[str, Any] | None:
                 return parsed
         except json.JSONDecodeError:
             continue
+
+    # 整体失败时：raw_decode 渐进解析 —— 容忍「JSON 对象后跟了散文/解释」。
+    # （对 JSON 内部裸引号等语法错误无效，但覆盖最常见的「尾巴」问题。）
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(candidate)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
     return None
 
 
@@ -70,11 +83,13 @@ Break it into 2-5 concrete subtasks. IMPORTANT: every subtask is executed CONCUR
 - A subtask can NEVER depend on files or results produced by another subtask — they run in parallel and cannot see each other's files.
 - Any data a subtask needs (a web fetch, a computation, a file it must create) must be obtained INSIDE that subtask itself.
 - If a step truly depends on an earlier one, merge them into ONE subtask rather than chaining.
+- NEVER split "one data source, multiple output formats" (e.g. saving the same quote as .md AND .json AND .txt) into separate subtasks — one subtask must produce ALL requested formats itself, otherwise every parallel subtask re-fetches the same data.
 - Spell out exactly what to produce and how; the executor only sees your instruction.
 
 Constraints:
 - File I/O only happens inside the task's sandbox. Use RELATIVE paths only (e.g. `jobs_raw.json` or `notes/plan.md`). Absolute paths like /tmp, /app, /root, /home are rejected by the executor — they must never appear in instructions or artifacts.
 - Each subtask's expected artifacts should be files it creates itself.
+- Inside `instruction`, NEVER use double quotes ("); quote sample text with 「」 instead — raw quotes break the JSON you must output.
 
 Language: write every `title`, `instruction` and `artifacts` in {language} — never in English.
 
@@ -99,7 +114,7 @@ class Planner:
         router: LiteLLMRouter,
         *,
         language: str = "zh",
-        max_retries: int = 2,
+        max_retries: int = 3,
         verbose: bool = False,
         model: str | None = None,
     ) -> None:
@@ -136,15 +151,19 @@ class Planner:
                     )
                 if normalized:
                     return normalized
-            last_error = f"attempt {attempt} produced unparseable plan: {content[:200]!r}"
-            # force a retry with explicit instruction to emit valid JSON
+            last_error = f"attempt {attempt} produced unparseable plan: {content[:600]!r}"
+            # force a retry, feeding the concrete failure back so the model
+            # can fix the exact JSON problem (fence / quotes / trailing comma)
             messages = [
                 {"role": "user", "content": PLANNER_PROMPT.format(objective=objective, language=lang)},
                 {
                     "role": "assistant",
                     "content": "I must output ONLY a valid JSON object of the requested shape.",
                 },
-                {"role": "user", "content": "Output the JSON now."},
+                {
+                    "role": "user",
+                    "content": f"Output the JSON now. Your previous attempt failed to parse as JSON; fix the exact problem:\n{last_error[:500]}",
+                },
             ]
         raise ValueError(f"Planner failed after {self.max_retries} attempts: {last_error}")
 
@@ -165,7 +184,10 @@ Executed results (summaries from specialist executors):
 Final deliverable:
 {deliverable}
 
-Judge strictly whether the objective is fully satisfied. If anything is unverified, missing, or vague, it must NOT pass. Output ONLY a JSON object, no prose:
+Judge whether the objective is satisfied. IMPORTANT calibration:
+- If the PRIMARY goal is met (the requested deliverable exists with correct content), PASS even when secondary/planned extras are incomplete — mark those in "missing" but keep "passed": true. Do not force a re-run for nice-to-haves.
+- Only fail when the core deliverable is absent, wrong, or unverifiable.
+Output ONLY a JSON object, no prose:
 {{
   "passed": true or false,
   "score": 0-100,

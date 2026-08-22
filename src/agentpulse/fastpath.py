@@ -15,6 +15,7 @@ import ast
 import datetime
 import operator
 import re
+import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
@@ -157,6 +158,69 @@ def _try_time(text: str) -> FastAnswer | None:
         answer=answer,
         detail=now.isoformat(timespec="seconds"),
     )
+
+
+# -- 指数/行情报价（腾讯行情接口，确定性解析，零模型） --------------------------
+_INDEX_NAMES = {
+    "纳斯达克": "usIXIC",
+    "上证": "sh000001",
+    "深证成指": "sz399001",
+    "恒生": "hkHSI",
+    "标普": "usINX",
+    "道琼斯": "usDJI",
+}
+_INDEX_CODE_RE = re.compile(r"(us[A-Za-z]{1,5}|sh\d{6}|sz\d{6}|hk\d{5})")
+_INDEX_CTX_RE = re.compile(r"指数|行情|点位|报价|涨跌幅|走势")
+
+
+def _fetch_quote(code: str, timeout: float = 8.0) -> str | None:
+    """拉取腾讯行情文本（GBK）；任何失败返回 None（回退 LLM）。"""
+    try:
+        with urllib.request.urlopen(f"https://qt.gtimg.cn/q={code}", timeout=timeout) as resp:
+            raw = resp.read()
+        return raw.decode("gbk", errors="ignore")
+    except Exception:  # noqa: BLE001 - 网络/解析失败回退 LLM
+        return None
+
+
+def _try_index_quote(text: str) -> FastAnswer | None:
+    """「查纳斯达克指数 / usIXIC 行情」→ 腾讯行情接口确定性解析，零模型。
+
+    仅在明确「指数/行情/点位」语境下触发，避免误匹配普通对话。
+    """
+    t = text.strip()
+    if not _INDEX_CTX_RE.search(t):
+        return None
+    code: str | None = None
+    m = _INDEX_CODE_RE.search(t)
+    if m:
+        code = m.group(1)
+    else:
+        for name, c in _INDEX_NAMES.items():
+            if name in t:
+                code = c
+                break
+    if not code:
+        return None
+    raw = _fetch_quote(code)
+    if not raw or "=" not in raw:
+        return None
+    payload = raw.split("=", 1)[1].strip().strip('";')
+    fields = payload.split("~")
+    if len(fields) < 5:
+        return None
+    name = fields[1] or code
+    try:
+        price = float(fields[3])
+        prev = float(fields[4])
+        pct = (price - prev) / prev * 100 if prev else None
+    except (ValueError, IndexError):
+        price = pct = None
+    if price is None:
+        return None
+    pct_str = "—" if pct is None else f"{pct:+.2f}%"
+    answer = f"{name} 当前点位 {price:,.2f}，涨跌幅 {pct_str}。"
+    return FastAnswer(query=text, method="index_quote", answer=answer, detail=answer)
 
 
 # -- statistics / sorting --------------------------------------------------------
@@ -393,6 +457,7 @@ def try_fast_answer(
         _try_base_convert,
         _try_text_stats,
         _try_time,
+        _try_index_quote,
     ]
     for check in checks:
         result = check(text)
@@ -446,6 +511,7 @@ _BUILTIN_MATCHERS: list[dict[str, str]] = [
     {"name": "fastpath.base_convert", "trigger": "十进制转二进制 / 十六进制", "desc": "进制转换"},
     {"name": "fastpath.text_stats", "trigger": "这段文字有多少字 / 多少行", "desc": "文本统计"},
     {"name": "fastpath.time", "trigger": "现在几点 / 当前时间", "desc": "当前本地时间"},
+    {"name": "fastpath.index_quote", "trigger": "查纳斯达克/上证指数 / usIXIC 行情 / 点位", "desc": "指数/行情报价（腾讯行情接口，零模型）"},
 ]
 
 

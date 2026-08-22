@@ -65,6 +65,17 @@ def detect(text):
     def test_malicious_code_rejected(self, evil_source: str) -> None:
         assert run_detector(evil_source, "anything") is None
 
+    def test_format_map_dunder_bypass_rejected(self) -> None:
+        # dunder 遍历藏进字符串字面量，AST 属性检查看不见；必须靠禁止
+        # format_map 拦截（str.format 已被禁，format_map 是其唯一旁路）。
+        evil = (
+            "def detect(t):\n"
+            "    return '{x.__class__.__bases__}'.format_map({})\n"
+        )
+        assert run_detector(evil, "anything") is None
+        # 正常 format 同样被禁（回归基线）
+        assert run_detector("def detect(t):\n    return '{}'.format(t)\n", "x") is None
+
     def test_broken_detector_no_crash(self) -> None:
         assert run_detector("def detect(t):\n    raise ValueError('boom')", "x") is None
         assert run_detector("not python at all {{{", "x") is None
@@ -198,6 +209,30 @@ class TestPluginManagement:
         with pytest.raises(CodeGenError):
             promote_plugins(["gen_0000000000"], plugin_dir=str(tmp_path), target_path=str(tmp_path / "x.py"))
 
+    def test_promote_preserves_existing_detectors(self, tmp_path) -> None:
+        """重复晋升不应覆盖丢失已晋升的检测器（回归：否则历史晋升被整体覆盖）。"""
+        names = self._make_plugins(tmp_path)
+        target = tmp_path / "generated_detectors.py"
+        # 第一次晋升：2 个检测器
+        assert promote_plugins(names, plugin_dir=str(tmp_path), target_path=str(target)) == 2
+        assert "def detect_promoted_1(" in target.read_text(encoding="utf-8")
+        assert "def detect_promoted_2(" in target.read_text(encoding="utf-8")
+
+        # 新增第三个插件再晋升
+        third = save_plugin(
+            "def detect(x):\n    return 'no'", tmp_path, trigger="判断质数"
+        )
+        assert promote_plugins([third], plugin_dir=str(tmp_path), target_path=str(target)) == 3
+
+        content = target.read_text(encoding="utf-8")
+        # 前两次晋升的检测器必须仍在
+        assert "def detect_promoted_1(" in content
+        assert "def detect_promoted_2(" in content
+        # 新晋升的检测器追加进来（编号延续，不碰撞）
+        assert "def detect_promoted_3(" in content
+        assert "DETECTORS: list[Callable[[str], str | None]] = [detect_promoted_1, detect_promoted_2, detect_promoted_3]" in content
+        compile(ast.parse(content, mode="exec"), "<generated>", "exec")
+
 
 class TestCodegenSolve:
     def test_generates_and_runs(self, tmp_path) -> None:
@@ -263,6 +298,10 @@ class TestTaskRunnerIntegration:
         class GenRouter:
             def __init__(self) -> None:
                 self.calls = 0
+                self.env_model = "fake-model"
+
+            def resolve_model(self, model=None):
+                return model or self.env_model
 
             def complete(self, messages, **kwargs):
                 self.calls += 1
@@ -302,6 +341,10 @@ class TestTaskRunnerIntegration:
         class ScriptedRouter:
             def __init__(self) -> None:
                 self.calls = 0
+                self.env_model = "fake-model"
+
+            def resolve_model(self, model=None):
+                return model or self.env_model
 
             def complete(self, messages, **kwargs):
                 resp = script[min(self.calls, len(script) - 1)]

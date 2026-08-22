@@ -42,6 +42,9 @@ export default function ChatPanel({ onAfterTurn }: Props) {
   const [histTurns, setHistTurns] = useState<ChatTurn[]>([])
   const [histOpen, setHistOpen] = useState(false)
   const [fastOpen, setFastOpen] = useState(false)
+  // 会话级模型覆盖：'' = 跟随聊天模型；否则本会话用该模型库别名
+  const [sessionModel, setSessionModel] = useState('')
+  const [modelAliases, setModelAliases] = useState<string[]>([])
   const endRef = useRef<HTMLDivElement>(null)
 
   const loadHistory = useCallback(async () => {
@@ -56,6 +59,22 @@ export default function ChatPanel({ onAfterTurn }: Props) {
   useEffect(() => {
     void loadHistory()
   }, [loadHistory])
+
+  // 模型库别名：供「会话模型」选择器使用（与设置页模型库一致）
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const c = await api.getConfig()
+        if (!cancelled) setModelAliases(Object.keys(c.models ?? {}))
+      } catch {
+        /* backend down — 选择器仅显示默认 */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -85,7 +104,7 @@ export default function ChatPanel({ onAfterTurn }: Props) {
     setMessages((m) => [...m, { id: crypto.randomUUID(), role: 'user', content: text }])
     setBusy(true)
     try {
-      const res = await api.chat(text)
+      const res = await api.chat(text, sessionModel || undefined)
       if (res.status === 'pending_approval' && res.pending && res.thread_id) {
         // the loop suspended on a human-approval gate — show the approval card
         const tid: string = res.thread_id
@@ -154,6 +173,21 @@ export default function ChatPanel({ onAfterTurn }: Props) {
     <div className="chat">
       {error && <div className="error-banner">{error}</div>}
       <div className="chat-tools-row">
+        <label className="chat-session-model" title="本会话使用的模型（空 = 跟随「设置 → 聊天模型」）">
+          <span className="chat-session-model-label">会话模型</span>
+          <select
+            className="chat-session-model-select"
+            value={sessionModel}
+            onChange={(e) => setSessionModel(e.target.value)}
+          >
+            <option value="">默认</option>
+            {modelAliases.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+        </label>
         <button
           type="button"
           className="chat-clear-session"

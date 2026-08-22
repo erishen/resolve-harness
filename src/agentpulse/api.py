@@ -49,8 +49,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .chat_history import ChatHistoryStore
+from .event_log import EventLog
 from .harness import Harness
-from .llm import usage_diff, usage_snapshot
+from .llm import LLMError, usage_diff, usage_snapshot
 from .tasks import TaskRunner
 
 # Vite dev server default port; the frontend proxies /api here in dev.
@@ -62,6 +63,8 @@ _ALLOWED_ORIGINS = [
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
+    # 会话级模型覆盖（本 turn 用该模型，别名或模型名；空 = 聊天模型默认）
+    model: str | None = Field(default=None, max_length=200)
 
 
 class MemoryWrite(BaseModel):
@@ -75,18 +78,20 @@ class TaskCreate(BaseModel):
 
 
 class ConfigUpdate(BaseModel):
-    parallel: int = Field(ge=1, le=16)
-    max_replan_rounds: int = Field(ge=0, le=5)
-    max_steps: int = Field(ge=1, le=50)
+    # None = 未变更：不改内存、不覆盖磁盘（支持字段级部分更新，避免 UI
+    # 全量提交把磁盘上被脚本/手动改过的其它字段覆盖回内存旧值）。
+    parallel: int | None = Field(default=None, ge=1, le=16)
+    max_replan_rounds: int | None = Field(default=None, ge=0, le=5)
+    max_steps: int | None = Field(default=None, ge=1, le=50)
     agent_models: dict[str, str] | None = Field(
         default=None,
         description='per-agent LLM override: planner/specialist/evaluator/reporter '
-        '(None = keep current)',
+        '(None = keep current) — task model, empty = .env baseline',
     )
     default_model: str | None = Field(
         default=None,
-        description="global default model override ('' = clear, back to .env LLM_MODEL; "
-        'None = keep current)',
+        description="chat model override ('' = clear, back to .env LLM_MODEL; "
+        'None = keep current) — chat only, independent of task model',
     )
     models: dict[str, dict[str, str]] | None = Field(
         default=None,
@@ -109,8 +114,8 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "parallel": 4,  # Specialist fan-out
     "max_replan_rounds": 1,  # evaluator-fail replan rounds (anti-runaway)
     "max_steps": 10,  # specialist tool-loop step cap (planner/evaluator are single calls)
-    "agent_models": {},  # per-agent LLM override (empty = router default)
-    "default_model": "",  # global model override (empty = .env LLM_MODEL)
+    "agent_models": {},  # 任务模型：per-agent LLM override (empty = .env baseline)
+    "default_model": "",  # 聊天模型：chat model override (empty = .env LLM_MODEL)
     "models": {},  # named model profiles {alias: {base_url, model, api_key_env}}
 }
 
@@ -264,6 +269,8 @@ def create_app(
     if _cfg["default_model"]:
         app.state.runner.router.settings.model = _cfg["default_model"]
     app.state.chat_history = chat_history or ChatHistoryStore()
+    # 事件日志：复用 harness 的连接（单一数据源）；无 harness 时自建
+    app.state.event_log = getattr(app.state.harness, "_event_log", None) or EventLog()
 
     app.add_middleware(
         CORSMiddleware,
@@ -298,8 +305,15 @@ def create_app(
             # model) — cross-turn knowledge comes from long-term memory +
             # the automatic memory pre-fetch; the transcript still displays
             # the full conversation.
-            reply = h.run(req.message, session_history=False)
-        except Exception as exc:  # noqa: BLE001 - surface LLM errors as 502
+            reply = h.run(req.message, session_history=False, model=req.model)
+        except LLMError as exc:
+            # 配置问题（缺 api_key / api_base / 模型名）对调用方属客户端错误：
+            # 返回 400 并给出明确指引，而不是把 traceback 包成 502。
+            raise HTTPException(
+                status_code=400,
+                detail=f"模型调用失败，请检查 LLM 配置（api_key / api_base / 模型名）：{exc}",
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - surface other errors as 502
             raise HTTPException(status_code=502, detail=f"agent error: {exc}") from exc
         payload = _chat_payload(h, reply, usage_diff(h.router, before))
         _record_chat_turn(app, req.message, payload)
@@ -435,9 +449,12 @@ def create_app(
         applies to the next task and persists across restarts. Optional
         fields (agent_models/default_model/models=None) keep current values."""
         runner: TaskRunner = app.state.runner
-        runner.parallel = req.parallel
-        runner.max_replan_rounds = req.max_replan_rounds
-        runner.max_steps = req.max_steps
+        if req.parallel is not None:
+            runner.parallel = req.parallel
+        if req.max_replan_rounds is not None:
+            runner.max_replan_rounds = req.max_replan_rounds
+        if req.max_steps is not None:
+            runner.max_steps = req.max_steps
         if req.agent_models is not None:
             runner.set_agent_models(req.agent_models)
         if req.models is not None:
@@ -446,12 +463,21 @@ def create_app(
             # empty -> back to .env LLM_MODEL; non-empty -> live override
             runner.router.settings.model = req.default_model or app.state.env_model
         prev = _load_config()
+        # 写盘：仅显式变更的字段覆盖，其余保留磁盘现值（prev）。
         _save_config(
             {
-                "parallel": runner.parallel,
-                "max_replan_rounds": runner.max_replan_rounds,
-                "max_steps": runner.max_steps,
-                "agent_models": runner.agent_models,
+                "parallel": req.parallel
+                if req.parallel is not None
+                else prev.get("parallel", _DEFAULT_CONFIG["parallel"]),
+                "max_replan_rounds": req.max_replan_rounds
+                if req.max_replan_rounds is not None
+                else prev.get("max_replan_rounds", _DEFAULT_CONFIG["max_replan_rounds"]),
+                "max_steps": req.max_steps
+                if req.max_steps is not None
+                else prev.get("max_steps", _DEFAULT_CONFIG["max_steps"]),
+                "agent_models": prev.get("agent_models", {})
+                if req.agent_models is None
+                else req.agent_models,
                 "default_model": prev.get("default_model", "")
                 if req.default_model is None
                 else req.default_model,
@@ -491,8 +517,19 @@ def create_app(
             )
         before = usage_snapshot(h.router)
         try:
-            reply = h.resolve_approval(req.decisions)
-        except Exception as exc:  # noqa: BLE001 - surface LLM errors as 502
+            # req.decisions 是 pydantic 模型列表（或裸字符串）；human_gate 内部的
+            # _normalize_decisions 只认 dict，故在边界把模型转成 dict，否则逐条被跳过、
+            # 所有待审调用默认拒绝。裸字符串路径原样透传。
+            decisions = req.decisions
+            if isinstance(decisions, list):
+                decisions = [d.model_dump() for d in decisions]
+            reply = h.resolve_approval(decisions)
+        except LLMError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"模型调用失败，请检查 LLM 配置（api_key / api_base / 模型名）：{exc}",
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - surface other errors as 502
             raise HTTPException(status_code=502, detail=f"agent error: {exc}") from exc
         payload = _chat_payload(h, reply, usage_diff(h.router, before))
         _record_chat_turn(app, "(resume approval)", payload)
@@ -541,6 +578,12 @@ def create_app(
         runner: TaskRunner = app.state.runner
         return {"tasks": runner.list()}
 
+    @app.delete("/api/tasks")
+    def task_clear() -> dict[str, Any]:
+        """清空任务历史（含持久化与内存中的任务）。"""
+        runner: TaskRunner = app.state.runner
+        return {"deleted": runner.clear_history()}
+
     @app.get("/api/tasks/{task_id}")
     def task_get(task_id: str) -> dict[str, Any]:
         runner: TaskRunner = app.state.runner
@@ -563,7 +606,7 @@ def create_app(
                 if event is None:  # sentinel: stream over
                     break
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                if event["type"] in {"task_end", "error"}:
+                if event["type"] in {"task_end", "error", "task_stopped"}:
                     break
 
         return StreamingResponse(
@@ -575,6 +618,13 @@ def create_app(
                 "Connection": "keep-alive",
             },
         )
+
+    @app.post("/api/tasks/{task_id}/stop")
+    def stop_task(task_id: str) -> dict[str, Any]:
+        """请求后端中止一个运行中的任务（best-effort，安全点生效）。"""
+        runner: TaskRunner = app.state.runner
+        ok = runner.stop(task_id)
+        return {"ok": ok}
 
     _register_plugin_routes(app)
     _register_sandbox_routes(app)
@@ -593,6 +643,31 @@ def _register_plugin_routes(app: FastAPI) -> None:
         promote_plugins,
     )
     from .fastpath import list_builtin_matchers
+
+    @app.get("/api/events")
+    def events(
+        scope: str | None = Query(default=None, pattern="^(chat|task)$"),
+        ref: str | None = Query(default=None),
+        limit: int = Query(default=200, ge=1, le=2000),
+    ) -> dict[str, Any]:
+        """事件日志查询（聊天/任务事件持久化，可回放/审计）。
+
+        带 `ref`：返回该 turn/task 的完整 trace（原始顺序，replay）。
+        不带 `ref`：返回 scope 的最近事件 + 可回放 refs 列表。
+        """
+        log: EventLog = app.state.event_log
+        if ref:
+            return {"refs": [], "events": log.replay(scope or "task", ref)}
+        return {
+            "refs": log.refs(scope, limit) if scope else [],
+            "events": log.recent(scope, limit),
+        }
+
+    @app.delete("/api/events")
+    def events_clear() -> dict[str, Any]:
+        """清空事件日志（审计）：删除全部聊天/任务事件。"""
+        log: EventLog = app.state.event_log
+        return {"deleted": log.clear()}
 
     @app.get("/api/plugins")
     def plugins_list() -> dict[str, Any]:

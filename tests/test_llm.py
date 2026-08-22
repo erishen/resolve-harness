@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from agentpulse.llm import _extract_usage, usage_diff
+from agentpulse.llm import LiteLLMRouter, _extract_usage, usage_diff
 
 
 def test_extract_usage_from_usage_object() -> None:
@@ -46,3 +46,25 @@ def test_usage_diff_none_when_untracked() -> None:
         pass
 
     assert usage_diff(Router(), None) is None
+
+
+def test_ensure_user_trailing_appends_user_after_tool() -> None:
+    msgs = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "u"},
+        {"role": "assistant", "content": "", "tool_calls": []},
+        {"role": "tool", "content": "r", "tool_call_id": "c1"},
+    ]
+    out = LiteLLMRouter._ensure_user_trailing(msgs)
+    assert out[-1]["role"] == "user"
+    # 原列表不被修改（保持不可变语义）
+    assert msgs[-1]["role"] == "tool"
+    assert len(out) == len(msgs) + 1
+
+
+def test_ensure_user_trailing_noop_when_not_ending_in_tool() -> None:
+    msgs = [
+        {"role": "user", "content": "u"},
+        {"role": "assistant", "content": "a"},
+    ]
+    assert LiteLLMRouter._ensure_user_trailing(msgs) is msgs

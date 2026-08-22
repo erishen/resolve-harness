@@ -26,11 +26,19 @@ function producedFilesOf(events: TaskEvent[]): { name: string; path: string; fal
   const seen = new Set<string>()
   const out: { name: string; path: string; fallback: string }[] = []
   for (const ev of events) {
-    if (ev.type !== 'tool_call' || String(ev.data.name ?? '') !== 'write_file') continue
-    const p = String((ev.data.args as Record<string, unknown> | undefined)?.path ?? '')
-    if (p && !seen.has(p)) {
-      seen.add(p)
-      out.push({ name: p, path: `tasks/${taskId}/${p}`, fallback: p })
+    if (ev.type === 'tool_call' && String(ev.data.name ?? '') === 'write_file') {
+      const p = String((ev.data.args as Record<string, unknown> | undefined)?.path ?? '')
+      if (p && !seen.has(p)) {
+        seen.add(p)
+        out.push({ name: p, path: `tasks/${taskId}/${p}`, fallback: p })
+      }
+    } else if (ev.type === 'produced_file') {
+      // run_script 等子进程工具真实落盘的文件（如 futures.md）
+      const p = String((ev.data as Record<string, unknown>).path ?? '')
+      if (p && !seen.has(p)) {
+        seen.add(p)
+        out.push({ name: p, path: `tasks/${taskId}/${p}`, fallback: p })
+      }
     }
   }
   return out
@@ -56,6 +64,18 @@ export default function HistoryPanel() {
     try {
       const { tasks } = await api.listTasks()
       setTasks(tasks.filter((t) => t.status !== 'running'))
+    } catch {
+      /* backend down */
+    }
+  }, [])
+
+  const clearAll = useCallback(async () => {
+    if (!window.confirm('清空全部历史任务？此操作不可撤销。')) return
+    try {
+      await api.clearTasks()
+      setTasks([])
+      setSelectedId(null)
+      setPreview(null)
     } catch {
       /* backend down */
     }
@@ -120,7 +140,14 @@ export default function HistoryPanel() {
   return (
     <div className="history-panel">
       <div className="hist-list">
-        <div className="hist-head">📚 历史任务（{tasks.length}）· 点击回看</div>
+        <div className="hist-head">
+          <span>📚 历史任务（{tasks.length}）· 点击回看</span>
+          {tasks.length > 0 && (
+            <button type="button" className="hist-clear" onClick={() => void clearAll()}>
+              🗑 清空
+            </button>
+          )}
+        </div>
         {tasks.length === 0 ? (
           <div className="empty">暂无历史记录 — 成功完成的任务会自动保存在这里</div>
         ) : (

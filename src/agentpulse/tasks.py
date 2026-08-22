@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
+from .event_log import EventLog
 from .graph.loop import build_loop
 from .harness import Harness, memory_hint
 from .llm import LiteLLMRouter, usage_diff, usage_snapshot
@@ -65,6 +66,7 @@ SPECIALIST_PROMPT = """You are a SPECIALIST executor in a multi-agent task syste
 
 Subtask: {title}
 Instruction: {instruction}
+当前日期: {today}（需要「今天」的查询——如行情、日历——请使用此日期；接口要求 YYYYMMDD 时去掉连字符即可）
 
 Context:
 {context}
@@ -75,6 +77,7 @@ Rules:
 3. TRUST tool results. Never recompute what a tool already returned.
 4. Prefer the minimum number of tool calls that fully answers the subtask. One batch, then summarize.
 5. Use tools when they help: write_file/read_file for artifacts (ALWAYS relative sandbox paths — never /tmp, /app or any absolute path), get_current_time for time. Arithmetic has no tool — pure math is resolved by code; compute simple values yourself. You may `recall` an existing long-term fact if needed, but NEVER write to long-term memory (no remember) — task data lives only in the sandbox files you create.
+6. 你具备联网能力：`fetch` 工具可抓取任意公开网页 / API（含 JSON）。需要外部实时数据（行情、汇率、网页等）时「必须」真实调用 `fetch` 并解析其返回内容；严禁以「模型无法访问网络 / 环境限制」为由跳过 fetch 或编造占位结果（如 [合约名称]）——`fetch` 就是你的联网通道，调用后即可拿到真实数据。
 6. When done, end with a concise summary, and put every key computed value on its own line, e.g. "结果: 68".
 
 Language: write your thinking and your final summary in {language} — never in English.
@@ -84,6 +87,8 @@ Begin."""
 REPORTER_PROMPT = """You are the REPORTER of a multi-agent task system. Compose the final deliverable for the user based on the executed work.
 
 Objective: {objective}
+
+当前日期: {today}（若交付物涉及具体日期，使用此值）
 
 Subtasks executed:
 {plan}
@@ -103,11 +108,14 @@ class TaskRecord:
         self.task_id = task_id
         self.objective = objective
         self.model = model
-        self.status: str = "running"  # running | done | error
+        self.status: str = "running"  # running | done | error | stopped
+        self.stop_requested = False  # 后端可随时置位，_run 在安全点检查并优雅中止
         self.events: list[dict[str, Any]] = []
         self.created_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         self.error: str | None = None
         self.queue: queue.Queue = queue.Queue()
+        # 后续订阅者（如「切 Tab 再切回」重连 SSE）：_emit 会广播给它们
+        self.subscribers: list[queue.Queue] = []
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -136,6 +144,7 @@ class TaskRunner:
         parallel: int = 4,
         history_path: str | Path | None = None,
         agent_models: dict[str, str] | None = None,
+        event_log: EventLog | None = None,
     ) -> None:
         self.harness = harness
         self.router: LiteLLMRouter = harness.router
@@ -144,18 +153,20 @@ class TaskRunner:
         self.max_replan_rounds = max_replan_rounds
         self.plugin_dir = plugin_dir  # None -> data/fastpath_plugins
         self.codegen = codegen  # allow tests to pin the codegen step off
+        # 事件日志：_emit 实时落库（scope="task", ref=task_id），可重放/审计
+        self._event_log = event_log or EventLog()
         # per-agent LLM override: {"planner"|"specialist"|"evaluator"|"reporter": model}.
         # absent/empty keys fall back to the router default model.
         self.agent_models = {k: v for k, v in (agent_models or {}).items() if v}
         self._planner = Planner(
             self.router,
             language=language,
-            model=self.agent_models.get("planner"),
+            model=self._task_model("planner"),
         )
         self._evaluator = Evaluator(
             self.router,
             language=language,
-            model=self.agent_models.get("evaluator"),
+            model=self._task_model("evaluator"),
         )
         # parallel>1 runs the plan's subtasks concurrently (fan-out). The
         # router / memory / registry are thread-safe; results are collected
@@ -171,6 +182,11 @@ class TaskRunner:
         self._records: dict[str, TaskRecord] = {}
         self._lock = threading.Lock()
 
+    def _task_model(self, phase: str) -> str:
+        """任务模型：Agent 独立配置（agent_models[phase]）优先，空 = 跟随 .env
+        基线（router.env_model）——不跟随「聊天模型」default_model，两者独立。"""
+        return self.agent_models.get(phase) or self.router.env_model or ""
+
     def set_agent_models(self, models: dict[str, str]) -> None:
         """Runtime update of per-agent LLM overrides; applies to the next task.
 
@@ -181,8 +197,8 @@ class TaskRunner:
         self.agent_models = {
             k: v for k, v in models.items() if k in ("planner", "specialist", "evaluator", "reporter") and v
         }
-        self._planner.model = self.agent_models.get("planner")
-        self._evaluator.model = self.agent_models.get("evaluator")
+        self._planner.model = self._task_model("planner")
+        self._evaluator.model = self._task_model("evaluator")
 
     # -- history (persisted task log, SQLite) --------------------------------------
 
@@ -271,7 +287,9 @@ class TaskRunner:
 
     def start(self, objective: str) -> str:
         task_id = uuid.uuid4().hex[:12]
-        record = TaskRecord(task_id, objective, self.harness.settings.model)
+        # 显示任务实际采用的模型（Agent 独立配置 → .env 基线，与聊天模型无关）：
+        # record.model 直接进 task_start 事件与列表快照。
+        record = TaskRecord(task_id, objective, self.router.resolve_model(self._task_model("planner")))
         with self._lock:
             self._records[task_id] = record
         thread = threading.Thread(target=self._run, args=(task_id,), daemon=True)
@@ -283,6 +301,26 @@ class TaskRunner:
         if record:
             return record.snapshot()
         return self._history.get(task_id)
+
+    def clear_history(self) -> int:
+        """Delete all persisted task history (in-memory + SQLite); best-effort.
+
+        Returns the number of persisted rows removed. In-memory running tasks
+        are also dropped so the History tab empties completely.
+        """
+        deleted = 0
+        try:
+            with self._db_lock:
+                self._db()  # ensure the connection/schema exists
+                cur = self._conn.execute("DELETE FROM task_history")
+                self._conn.commit()
+                deleted = cur.rowcount
+        except sqlite3.Error:
+            pass
+        with self._lock:
+            self._history.clear()
+            self._records.clear()
+        return deleted
 
     def list(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -296,16 +334,24 @@ class TaskRunner:
         return snaps
 
     def subscribe(self, task_id: str) -> queue.Queue | None:
+        """Return a queue that replays all recorded events then streams live ones.
+
+        Finished tasks: replay everything + a None sentinel (stream over).
+        Running tasks: replay what happened so far, then keep receiving live
+        events — so a client that switches tabs and comes back mid-run gets
+        the full picture, not just events after reconnect.
+        """
         record = self._records.get(task_id)
         if record is None:
             return None
+        q: queue.Queue = queue.Queue()
+        for ev in record.events:
+            q.put(ev)
         if record.status != "running":
-            q: queue.Queue = queue.Queue()
-            for ev in record.events:
-                q.put(ev)
             q.put(None)
             return q
-        return record.queue
+        record.subscribers.append(q)
+        return q
 
     # -- event plumbing ----------------------------------------------------------
 
@@ -318,16 +364,22 @@ class TaskRunner:
         }
         record.events.append(event)
         record.queue.put(event)
+        for sub in record.subscribers:  # 切 Tab 重连的订阅者
+            sub.put(event)
+        # 事件日志：每个事件实时持久化（运行中/失败也留档，可重放）
+        self._event_log.append("task", record.task_id, event_type, data)
 
     # -- orchestration -------------------------------------------------------------
 
     def _run(self, task_id: str) -> None:
         record = self._records[task_id]
+        # token accounting for THIS task (planner + specialists + evaluator + reporter).
+        # 初始化必须在 try 之前：except 路径也读 usage_baseline，若赋值前就抛错，
+        # 异常处理自身会 UnboundLocalError，掩盖原始异常且发不出 error 事件。
+        usage_baseline = usage_snapshot(self.router)
         try:
             self._emit(record, "task_start", {"objective": record.objective, "model": record.model})
             objective = record.objective
-            # token accounting for THIS task (planner + specialists + evaluator + reporter)
-            usage_baseline = usage_snapshot(self.router)
 
             # Fast path: deterministic queries (arithmetic / time / conversions…)
             # are resolved by code — no Planner/Specialist/Evaluator LLM at all.
@@ -354,7 +406,12 @@ class TaskRunner:
             if self.codegen:
                 from .codegen import codegen_solve
 
-                gen_answer = codegen_solve(self.router, objective, plugin_dir=self.plugin_dir)
+                gen_answer = codegen_solve(
+                    self.router,
+                    objective,
+                    plugin_dir=self.plugin_dir,
+                    model=self._task_model("planner"),  # 任务 codegen 用任务模型，不落回聊天模型
+                )
                 if gen_answer is not None:
                     self._emit_fast_result(
                         record,
@@ -369,11 +426,17 @@ class TaskRunner:
             # One isolated sandbox + tool registry per task (parallel-safe).
             task_sandbox, task_registry = self._make_task_workspace(task_id)
 
+            if record.stop_requested:
+                return self._finish_stopped(record)
+
             for round_no in range(self.max_replan_rounds + 1):
                 plan = self._planner.plan(objective)
                 self._emit(record, "plan", {"objective": objective, "subtasks": plan, "round": round_no})
 
                 results = self._execute_plan(record, plan, registry=task_registry)
+
+                if record.stop_requested:
+                    return self._finish_stopped(record)
 
                 verdict = self._evaluator.evaluate(
                     objective,
@@ -417,7 +480,27 @@ class TaskRunner:
                 {"message": str(exc), "usage": usage_diff(self.router, usage_baseline)},
             )
         finally:
+            # 哨兵也要扇出给活跃订阅者：SSE/测试的 drain() 靠 None 收尾，
+            # 只放 record.queue 会让 live 订阅者永远等不到流结束。
             record.queue.put(None)
+            for sub in record.subscribers:
+                sub.put(None)
+
+    def _finish_stopped(self, record: TaskRecord) -> None:
+        """Gracefully abort at a safe checkpoint: emit a terminal event and
+        mark the record stopped. Best-effort — an in-flight synchronous LLM
+        call can't be interrupted, so this fires at the next checkpoint."""
+        self._emit(record, "task_stopped", {"objective": record.objective})
+        record.status = "stopped"
+
+    def stop(self, task_id: str) -> bool:
+        """Request a running task to abort. Returns False if the task is
+        unknown or no longer running; True once the stop flag is set."""
+        record = self._records.get(task_id)
+        if record is None or record.status != "running":
+            return False
+        record.stop_requested = True
+        return True
 
     # -- per-task isolated workspace ----------------------------------------------
 
@@ -433,22 +516,30 @@ class TaskRunner:
         task_dir = base / "tasks" / task_id
         registry = ToolRegistry()
         for tool in self.harness.tools:
-            if tool.name in {"read_file", "write_file", "list_files"}:
-                continue  # rebuilt below with the per-task sandbox
+            if tool.name in {"read_file", "write_file", "list_files", "run_script"}:
+                continue  # 这些在下面按 per-task 沙箱重新绑定
             if tool.name in {"remember", "list_memories"}:
                 # Tasks never WRITE long-term memory (specialists storing
                 # intermediate artifacts pollutes cross-session facts). recall
                 # is allowed: a specialist may read an existing snapshot.
                 continue
+            # 任务模式是「委托式、已隔离沙箱」的自主执行：没有在线人工审批者，
+            # 故工具不挂人工审批门（require_approval），直接落地到本任务沙箱。
+            # 人工审批门只在交互式 chat 模式启用（见 harness.py）。
             registry.register(
                 tool.func,
                 name=tool.name,
                 description=tool.description,
                 parameters=tool.parameters,
-                require_approval=tool.require_approval,
+                require_approval=False,
             )
         for fn in make_fs_tools(task_dir):
-            registry.register(fn)
+            registry.register(fn, require_approval=False)
+        # run_script 必须绑定到「当前任务」沙箱，否则脚本产物会写进全局沙箱，
+        # 任务隔离与交付物校验都失效。
+        from .tools.builtin import _make_run_script_tool
+
+        registry.register(_make_run_script_tool(str(task_dir)), require_approval=False)
         return task_dir, registry
 
     # -- specialists ------------------------------------------------------------------
@@ -480,6 +571,8 @@ class TaskRunner:
             # specialist loop is skipped entirely.
             from .fastpath import try_fast_answer
 
+            sub_base = usage_snapshot(self.router)  # 该子任务的 token 基线
+
             fast = try_fast_answer(
                 st["instruction"],
                 sandbox_dir=self.harness.sandbox_dir,
@@ -499,7 +592,15 @@ class TaskRunner:
                 self._emit(
                     record,
                     "subtask_done",
-                    {"index": i, "title": st["title"], "summary": summary, "fast": True},
+                    {
+                        "index": i,
+                        "title": st["title"],
+                        "summary": summary,
+                        "fast": True,
+                        # 并行模式下 worker 共享累计器，子任务 diff 互相交叉不可信，
+                        # 置 None（前端不显示），task_end 全量始终准确。
+                        "usage": usage_diff(self.router, sub_base) if self.parallel <= 1 else None,
+                    },
                 )
                 return result
 
@@ -513,6 +614,7 @@ class TaskRunner:
             system_prompt = SPECIALIST_PROMPT.format(
                 title=st["title"],
                 instruction=st["instruction"],
+                today=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
                 context=context,
                 language=_lang_name(self.language),
             )
@@ -532,7 +634,7 @@ class TaskRunner:
                 system_prompt=system_prompt,
                 verbose=self.harness.settings.verbose,
                 emit=emit_for_subtask,
-                model=self.agent_models.get("specialist"),
+                model=self._task_model("specialist"),
             )
             final = loop.invoke(
                 {
@@ -546,12 +648,27 @@ class TaskRunner:
             if self.parallel <= 1:
                 with done_lock:
                     done.append(result)
-            self._emit(record, "subtask_done", {"index": i, "title": st["title"], "summary": summary})
+            self._emit(
+                record,
+                "subtask_done",
+                {
+                    "index": i,
+                    "title": st["title"],
+                    "summary": summary,
+                    # 并行模式下子任务 usage 不可信（见 fast 分支注释）
+                    "usage": usage_diff(self.router, sub_base) if self.parallel <= 1 else None,
+                },
+            )
             return result
 
         if self.parallel > 1 and total > 1:
             with ThreadPoolExecutor(max_workers=min(self.parallel, total)) as pool:
-                futures = [pool.submit(run_one, i, st) for i, st in enumerate(plan)]
+                futures = []
+                for i, st in enumerate(plan):
+                    # 已请求停止则不再派发新的子任务（在跑的会自然完成）
+                    if record.stop_requested:
+                        break
+                    futures.append(pool.submit(run_one, i, st))
                 results: list[dict[str, Any]] = []
                 for fut in as_completed(futures):
                     try:
@@ -565,7 +682,12 @@ class TaskRunner:
             results.sort(key=lambda r: r["index"])
             return results
 
-        return [run_one(i, st) for i, st in enumerate(plan)]
+        results = []
+        for i, st in enumerate(plan):
+            if record.stop_requested:
+                break
+            results.append(run_one(i, st))
+        return results
 
     def _emit_fast_result(
         self,
@@ -623,6 +745,7 @@ class TaskRunner:
                         "role": "user",
                         "content": REPORTER_PROMPT.format(
                             objective=objective,
+                            today=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
                             plan=_format_plan_for_reporter(plan),
                             results=_format_results_for_reporter(results),
                             language=_lang_name(self.language),
@@ -630,7 +753,7 @@ class TaskRunner:
                     }
                 ],
                 temperature=0.3,
-                model=self.agent_models.get("reporter"),
+                model=self._task_model("reporter"),
             )
             return (response.get("content") or "").strip() or _summarize_results(results)
         except Exception:  # noqa: BLE001 - fall back to plain summaries

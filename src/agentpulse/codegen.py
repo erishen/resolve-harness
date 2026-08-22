@@ -82,7 +82,11 @@ _FORBIDDEN_NAMES = {
 # Method-ish attributes allowed on objects (e.g. text.upper(), parts.split()).
 # Anything starting with "_" is already banned; this is a second, explicit list
 # for extra safety on the most dangerous looking ones.
-_FORBIDDEN_ATTRS = {"eval", "exec", "format", "globals", "locals", "mro", "subclasses", "init"}
+# NOTE: `format_map` is included because format strings let dunder traversal
+# (`"{x.__class__.__subclasses__}"`) hide inside a string literal where the AST
+# attribute check can't see it — `str.format` is already blocked for the same
+# reason, and `format_map` is its only sibling escape hatch.
+_FORBIDDEN_ATTRS = {"eval", "exec", "format", "format_map", "globals", "locals", "mro", "subclasses", "init"}
 
 # AST nodes generated code is allowed to use.
 _ALLOWED_NODES = (
@@ -364,12 +368,17 @@ def codegen_solve(
     *,
     plugin_dir: str | Path | None = None,
     max_attempts: int = 2,
+    model: str | None = None,
 ) -> str | None:
     """Ask the LLM to generate a detector for `query`, validate & run it.
 
     On success the answer is returned AND the detector is persisted as a
     plugin, so the next identical query resolves without any model call.
     Returns None when the model declines / code is unsafe / doesn't answer.
+
+    `model`: explicit model alias/name for this generation; None falls back
+    to the router default (chat model). Task callers pass the task model so
+    the pipeline never silently uses the chat model.
 
     Generation is retried once with feedback when the first candidate fails
     to match (LLM output is nondeterministic).
@@ -386,6 +395,7 @@ def codegen_solve(
             response = router.complete(
                 [{"role": "user", "content": prompt}],
                 temperature=0.2,
+                model=model,
             )
         except Exception:  # noqa: BLE001
             return None
@@ -542,9 +552,33 @@ def promote_plugins(
     if not sources:
         raise CodeGenError("no valid plugins selected to promote")
 
-    parts: list[str] = [_GENERATED_HEADER]
-    func_names: list[str] = []
-    for i, (trigger, source) in enumerate(sources, 1):
+    target = Path(target_path) if target_path else default_promote_target()
+
+    # 保留已晋升的检测器，避免重复晋升时整体覆盖、丢失历史晋升结果。
+    existing_funcs: list[str] = []
+    existing_names: list[str] = []
+    last_idx = 0
+    if target.exists():
+        text = target.read_text(encoding="utf-8")
+        for blk in re.split(r"\n(?=def detect_promoted_\d+\()", text):
+            if not blk.lstrip().startswith("def detect_promoted_"):
+                continue
+            # 去掉可能跟在最后一个函数后的 DETECTORS 行
+            body = re.split(r"\nDETECTORS:", blk, maxsplit=1)[0].rstrip("\n")
+            if not body.strip():
+                continue
+            existing_funcs.append(body)
+            nm = re.search(r"def\s+(detect_promoted_\d+)\(", body)
+            if nm:
+                existing_names.append(nm.group(1))
+                try:
+                    last_idx = max(last_idx, int(nm.group(1).rsplit("_", 1)[1]))
+                except ValueError:
+                    pass
+
+    parts: list[str] = list(existing_funcs)
+    func_names: list[str] = list(existing_names)
+    for i, (trigger, source) in enumerate(sources, last_idx + 1):
         func_name = f"detect_promoted_{i}"
         # strip the trigger comment line and rename the function
         body = re.sub(r"^# trigger: .*$", "", source, flags=re.MULTILINE)
@@ -562,12 +596,19 @@ def promote_plugins(
             body = body[: def_line_end + 1] + doc + "\n" + body[def_line_end + 1 :]
         else:
             body += "\n" + doc
-        parts.append(body + "\n\n\n")
+        parts.append(body)
         func_names.append(func_name)
 
-    parts.append(f"DETECTORS: list[Callable[[str], str | None]] = [{', '.join(func_names)}]\n")
-    target = Path(target_path) if target_path else default_promote_target()
-    target.write_text("".join(parts), encoding="utf-8")
+    # 文件头：已存在则复用原头部（保留注释），否则用默认头。
+    header = _GENERATED_HEADER
+    if target.exists():
+        hm = re.search(r'(""".*?""")', target.read_text(encoding="utf-8"), re.DOTALL)
+        if hm:
+            header = hm.group(1) + "\n\nfrom typing import Callable\n\n"
+
+    content = "".join([header] + [p + "\n\n\n" for p in parts])
+    content += f"DETECTORS: list[Callable[[str], str | None]] = [{', '.join(func_names)}]\n"
+    target.write_text(content, encoding="utf-8")
 
     # runtime copies are now redundant — remove them
     removed = 0

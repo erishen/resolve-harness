@@ -257,6 +257,31 @@ class TestApprovalGate:
         kinds = [k for k, _ in events]
         assert "approval_result" in kinds
 
+    def test_run_script_emits_produced_file(self) -> None:
+        """run_script 子进程成功落盘时，loop 应广播 produced_file 事件（离线验证，不依赖网络）。"""
+        events: list[tuple[str, dict[str, Any]]] = []
+
+        def fake_run_script(name: str, args: str = "") -> str:
+            return "[run_script fetch_shfe_futures] 退出码 0\n下载完成"
+
+        router = FakeRouter(
+            [tool_call("run_script", {"name": "fetch_shfe_futures", "args": ""}), answer("done")]
+        )
+        reg = ToolRegistry()
+        reg.register(fake_run_script, name="run_script", require_approval=False)
+        loop = build_loop(
+            router,
+            reg,
+            system_prompt=SYSTEM,
+            emit=lambda kind, data: events.append((kind, data)),
+        )
+        state = {"messages": [HumanMessage(content="go")], "step": 0, "max_steps": 5}
+        invoke(loop, state)
+        produced = [d for k, d in events if k == "produced_file"]
+        assert produced, "run_script 成功应广播 produced_file 事件"
+        assert produced[0]["path"] == "futures.md"
+        assert produced[0]["name"] == "futures.md"
+
 
 def make_harness(router_script: list[dict[str, Any]], tmp_path) -> Harness:
     """A Harness with no builtin tools and one approval-gated tool. The fake

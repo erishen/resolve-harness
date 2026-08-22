@@ -25,3 +25,6 @@ class AgentState(TypedDict):
     step: int
     max_steps: int
     approvals: dict[str, Any]
+    # 会话级模型覆盖（per-turn override）：优先于 loop 构造时的默认 model；
+    # 缺省（None）时回退 loop 默认。由 harness.run(model=...) 注入。
+    model: str | None

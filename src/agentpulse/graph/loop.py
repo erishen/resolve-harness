@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
 from collections.abc import Callable
 from typing import Any
 
@@ -129,7 +130,8 @@ def build_loop(
         response = router.complete(
             llm_messages,
             tools=registry.schemas() if len(registry) else None,
-            model=model,
+            # 会话级模型覆盖优先，缺省回退 loop 构造时固定的 model。
+            model=state.get("model") or model,
         )
         tool_calls = router.parse_tool_calls(response)
         content = response.get("content") or ""
@@ -188,6 +190,12 @@ def build_loop(
                     result = f"Tool error: {exc}"
             if emit:
                 emit("tool_result", {"name": name, "content": result, "step": state.get("step", 0)})
+                # run_script 通过子进程写文件，不会走 write_file 工具，故单独广播
+                # 产出文件事件，让任务完成界面能列出真实落盘的制品（如 futures.md）。
+                if name == "run_script" and "退出码 0" in result:
+                    out_path = _run_script_out_path(args)
+                    if out_path:
+                        emit("produced_file", {"path": out_path, "name": out_path})
             tool_messages.append(ToolMessage(content=result, tool_call_id=call_id))
         # Decisions are consumed; reset so a stale id can never leak into a
         # later round (call ids are unique per step, but cheap to be sure).
@@ -295,6 +303,15 @@ def build_loop(
 
 
 # -- helpers ----------------------------------------------------------------------
+
+
+def _run_script_out_path(args: dict[str, Any]) -> str | None:
+    """run_script 始终把制品写到沙箱内的固定相对名 futures.md（见 builtin.run_script）。
+
+    模型传入的 --out 会被忽略，故这里直接返回固定名，避免广播越界/绝对路径。
+    仅用于 produced_file 事件，让 UI 能列出子进程真实落盘的文件。
+    """
+    return "futures.md"
 
 
 def _normalize_decisions(

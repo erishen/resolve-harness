@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
@@ -21,6 +21,16 @@ function formatMtime(mtime: number): string {
 const RENDERABLE_KINDS = new Set(['markdown', 'html', 'csv'])
 /** Kinds displayed as syntax-highlighted source (still editable). */
 const HIGHLIGHTED_KINDS = new Set(['json', 'code'])
+
+/** 文件类型过滤分组（沙箱文件 kind 全集：text/markdown/html/image/pdf/csv/json/code/binary） */
+type SandboxFilter = 'all' | 'image' | 'doc' | 'code' | 'other'
+const FILTER_DEFS: { key: SandboxFilter; label: string; kinds: Set<SandboxFile['kind']> | null }[] = [
+  { key: 'all', label: '全部', kinds: null },
+  { key: 'image', label: '图片', kinds: new Set(['image']) },
+  { key: 'doc', label: '文档', kinds: new Set(['markdown', 'html', 'csv', 'text']) },
+  { key: 'code', label: '代码', kinds: new Set(['json', 'code']) },
+  { key: 'other', label: '其他', kinds: new Set(['pdf', 'binary']) },
+]
 
 /** Extension -> highlight.js language (fallback: plaintext). */
 const EXT_LANG: Record<string, string> = {
@@ -93,6 +103,7 @@ function parseTable(text: string): string[][] {
 
 export default function SandboxPanel() {
   const [files, setFiles] = useState<SandboxFile[]>([])
+  const [filter, setFilter] = useState<SandboxFilter>('all')
   const [selected, setSelected] = useState<SandboxFile | null>(null)
   const [content, setContent] = useState('')
   const [loadingContent, setLoadingContent] = useState(false)
@@ -202,6 +213,22 @@ export default function SandboxPanel() {
     }
   }, [files.length, load])
 
+  // 类型过滤：选中分组只显示匹配 kind 的文件；每类计数（全部分组计数随文件变化）。
+  const filteredFiles = useMemo(() => {
+    if (filter === 'all') return files
+    const kinds = FILTER_DEFS.find((d) => d.key === filter)?.kinds
+    return kinds ? files.filter((f) => kinds.has(f.kind)) : files
+  }, [files, filter])
+  const typeCounts = useMemo(() => {
+    const counts: Record<SandboxFilter, number> = { all: files.length, image: 0, doc: 0, code: 0, other: 0 }
+    for (const f of files) {
+      for (const d of FILTER_DEFS) {
+        if (d.key !== 'all' && d.kinds?.has(f.kind)) counts[d.key] += 1
+      }
+    }
+    return counts
+  }, [files])
+
   return (
     <div className="sandbox-panel">
       <div className="sandbox-head">
@@ -230,10 +257,27 @@ export default function SandboxPanel() {
 
       <div className="sandbox-body">
         <div className="sandbox-list">
+          <div className="sandbox-filters">
+            {FILTER_DEFS.map((d) => (
+              <button
+                key={d.key}
+                type="button"
+                className={`sandbox-filter${filter === d.key ? ' active' : ''}`}
+                onClick={() => setFilter(d.key)}
+                title={d.key === 'all' ? '显示全部文件' : `只显示${d.label}（${d.kinds ? [...d.kinds].join(' / ') : ''}）`}
+              >
+                {d.label}
+                <span className="sandbox-filter-count">{typeCounts[d.key]}</span>
+              </button>
+            ))}
+          </div>
           {files.length === 0 && !error && (
             <div className="empty">沙箱为空 — 运行一个「写文件」任务试试</div>
           )}
-          {files.map((f) => (
+          {files.length > 0 && filteredFiles.length === 0 && (
+            <div className="empty">该类型下暂无文件</div>
+          )}
+          {filteredFiles.map((f) => (
             <div
               key={f.path}
               className={`sandbox-item ${selected?.path === f.path ? 'active' : ''}`}

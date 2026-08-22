@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
-import { api } from '../api'
-import { fmtUsage } from '../types'
+import { api, type AppConfig } from '../api'
+import { fmtNum, fmtUsage } from '../types'
 import type { Subtask, TaskEvent, UsageInfo } from '../types'
 
-type RunState = 'idle' | 'running' | 'done' | 'error'
+type RunState = 'idle' | 'running' | 'done' | 'stopped' | 'error'
 
 /** Fallback built-ins shown when the backend is unreachable (e.g. static preview). */
 const FALLBACK_EXAMPLES: { label: string; text: string; source: string }[] = [
@@ -155,7 +155,7 @@ type GroupedItem =
   | { kind: 'goal'; objective: string }
   | { kind: 'plan'; round: number; subtasks: Subtask[] }
   | { kind: 'subtask'; index: number; title: string; total: number; events: TaskEvent[] }
-  | { kind: 'subtask-done'; index: number; title: string; summary: string }
+  | { kind: 'subtask-done'; index: number; title: string; summary: string; usage: UsageInfo | null }
   | { kind: 'event'; event: TaskEvent }
   | {
       kind: 'evaluation'
@@ -197,6 +197,7 @@ export function groupEvents(events: TaskEvent[]): GroupedItem[] {
           index: Number(d.index ?? 0),
           title: String(d.title ?? ''),
           summary: String(d.summary ?? ''),
+          usage: (d.usage as UsageInfo | null | undefined) ?? null,
         })
         current = null
         break
@@ -251,11 +252,35 @@ export default function TaskPanel({ onMemoryChange }: Props) {
   const [objective, setObjective] = useState('')
   const [paramKey, setParamKey] = useState<string | null>('company')
   const [paramValue, setParamValue] = useState('usAAPL')
+
+  // 任务模板选择记忆：切 Tab 回来不丢（用户上次选的模板/参数）
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('agentpulse_task_param')
+      if (raw) {
+        const p = JSON.parse(raw) as { key: string | null; value: string }
+        if (typeof p.key === 'string' || p.key === null) setParamKey(p.key)
+        if (typeof p.value === 'string') setParamValue(p.value)
+      }
+    } catch {
+      /* 损坏则忽略，用默认 */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    sessionStorage.setItem(
+      'agentpulse_task_param',
+      JSON.stringify({ key: paramKey, value: paramValue }),
+    )
+  }, [paramKey, paramValue])
   const [events, setEvents] = useState<TaskEvent[]>([])
   const [state, setState] = useState<RunState>('idle')
   const [error, setError] = useState('')
   const [model, setModel] = useState('')
+  const [config, setConfig] = useState<AppConfig | null>(null)
   const [examples, setExamples] = useState<{ label: string; text: string; source?: string }[]>([])
+  const [examplesCollapsed, setExamplesCollapsed] = useState(false)
   const [regenerating, setRegenerating] = useState(false)
   const [confirmingDel, setConfirmingDel] = useState<string | null>(null)
   const [preview, setPreview] = useState<{ name: string; path: string; fallback: string } | null>(null)
@@ -267,6 +292,33 @@ export default function TaskPanel({ onMemoryChange }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const esRef = useRef<EventSource | null>(null)
   const delTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // SSE 高频事件缓冲：并行 Specialist 事件密集时合并为每 ~50ms 一次批量渲染，
+  // 避免每个事件触发一次全量重渲染（会卡住 Tab 切换等交互）。
+  const pendingRef = useRef<TaskEvent[]>([])
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const flushPending = useCallback(() => {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current)
+      flushTimerRef.current = null
+    }
+    if (pendingRef.current.length) {
+      const batch = pendingRef.current
+      pendingRef.current = []
+      setEvents((prev) => [...prev, ...batch])
+    }
+  }, [])
+
+  const pushEvent = useCallback((ev: TaskEvent) => {
+    pendingRef.current.push(ev)
+    if (flushTimerRef.current) return
+    flushTimerRef.current = setTimeout(() => {
+      flushTimerRef.current = null
+      const batch = pendingRef.current
+      pendingRef.current = []
+      if (batch.length) setEvents((prev) => [...prev, ...batch])
+    }, 50)
+  }, [])
 
   const loadExamples = useCallback(async () => {
     try {
@@ -296,6 +348,23 @@ export default function TaskPanel({ onMemoryChange }: Props) {
     void loadExamples()
   }, [loadExamples])
 
+  // 顶部「任务目标」行常驻显示当前生效模型（与 AgentsPanel 同一解析：
+  // agent_models[phase] → default_model → .env 基线；命中模型库别名时取具体模型名）。
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const cfg = await api.getConfig()
+        if (!cancelled) setConfig(cfg)
+      } catch {
+        /* backend down — 模型标签缺失不影响任务运行 */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   useEffect(() => {
     // 默认激活「查行情」模板并预填苹果任务：打开任务 Tab 即可直接运行
     if (!objective) {
@@ -309,6 +378,31 @@ export default function TaskPanel({ onMemoryChange }: Props) {
   const toolCalls = events.filter((e) => e.type === 'tool_call').length
   const param = templateByKey(paramKey)
 
+  // 顶部模型标签：按 Agent 角色解析任务模型（agent_models[phase] 独立配置 →
+  // 空 = 跟随 .env 基线 env_model，与「聊天模型」default_model 独立）。
+  // task_start 事件里的实时值（后端已解析）覆盖默认模型显示。
+  const agentModels = useMemo(() => {
+    if (!config) return null
+    const resolveOne = (phase: string): { phase: string; name: string; override: boolean } => {
+      const override = config.agent_models?.[phase]
+      const id = override || config.env_model?.model || ''
+      const name = id ? config.models?.[id]?.model || id : '未配置'
+      return { phase, name, override: Boolean(override) }
+    }
+    return ['planner', 'specialist', 'evaluator', 'reporter'].map(resolveOne)
+  }, [config])
+  const activeDefaultName = agentModels?.[0]?.name ?? null
+  // 顶部标签正文：独立配置的角色逐个列出，其余合并为「跟随默认」。
+  const modelLabel = useMemo(() => {
+    if (!agentModels) return null
+    const overrides = agentModels.filter((m) => m.override)
+    const base = model || activeDefaultName
+    if (overrides.length === 0) return base ? `${base}（默认）` : null
+    const parts = overrides.map((m) => `${m.phase}: ${m.name}`)
+    if (base) parts.push(`其余: ${base}（默认）`)
+    return parts.join(' · ')
+  }, [agentModels, model, activeDefaultName])
+
   // last task_end (deliverable) + the task's objective — for "save to memory"
   const finalEvent = useMemo(() => {
     for (let i = events.length - 1; i >= 0; i--) {
@@ -320,6 +414,22 @@ export default function TaskPanel({ onMemoryChange }: Props) {
     const st = events.find((e) => e.type === 'task_start')
     return st ? String(st.data.objective ?? '') : ''
   }, [events])
+
+  // 累计 token：累加各子任务完成的 usage（运行中实时增长）。
+  // task_end 的 usage 是整任务全量（含 planner/evaluator/reporter），
+  // 不参与累加，避免与子任务重复计数。
+  const totalTokens = useMemo(() => {
+    let t = 0
+    for (const ev of events) {
+      if (ev.type === 'task_end') continue
+      const u = (ev.data as { usage?: UsageInfo | null }).usage
+      if (u && typeof u.total_tokens === 'number') t += u.total_tokens
+    }
+    return t
+  }, [events])
+  const finalTotal = finalEvent
+    ? Number((finalEvent.data as { usage?: UsageInfo | null }).usage?.total_tokens ?? 0)
+    : 0
 
   // 找任务产出的「报告文档」：遍历产出文件（含 fallback），取第一个能提取出
   // markdown 标题的；返回其标题 + 去标题后的正文。
@@ -384,11 +494,19 @@ export default function TaskPanel({ onMemoryChange }: Props) {
     const seen = new Set<string>()
     const out: { name: string; path: string; fallback: string }[] = []
     for (const ev of events) {
-      if (ev.type !== 'tool_call' || String(ev.data.name ?? '') !== 'write_file') continue
-      const p = String((ev.data.args as Record<string, unknown> | undefined)?.path ?? '')
-      if (p && !seen.has(p)) {
-        seen.add(p)
-        out.push({ name: p, path: `tasks/${taskId}/${p}`, fallback: p })
+      if (ev.type === 'tool_call' && String(ev.data.name ?? '') === 'write_file') {
+        const p = String((ev.data.args as Record<string, unknown> | undefined)?.path ?? '')
+        if (p && !seen.has(p)) {
+          seen.add(p)
+          out.push({ name: p, path: `tasks/${taskId}/${p}`, fallback: p })
+        }
+      } else if (ev.type === 'produced_file') {
+        // run_script 等子进程工具真实落盘的文件（如 futures.md）
+        const p = String((ev.data as Record<string, unknown>).path ?? '')
+        if (p && !seen.has(p)) {
+          seen.add(p)
+          out.push({ name: p, path: `tasks/${taskId}/${p}`, fallback: p })
+        }
       }
     }
     return out
@@ -402,7 +520,11 @@ export default function TaskPanel({ onMemoryChange }: Props) {
     return () => {
       esRef.current?.close()
       if (delTimerRef.current) clearTimeout(delTimerRef.current)
+      // 卸载（切 Tab）前把缓冲事件落进 state，避免最后一批丢失
+      flushPending()
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const runTask = async (goalOverride?: string) => {
@@ -413,6 +535,8 @@ export default function TaskPanel({ onMemoryChange }: Props) {
     setState('running')
     try {
       const { task_id } = await api.createTask(goal)
+      // 记录当前运行任务：切 Tab 再切回时据此恢复进度
+      sessionStorage.setItem('agentpulse_live_task', task_id)
       const es = new EventSource(`/api/tasks/${task_id}/stream`)
       esRef.current = es
       es.onmessage = (msg) => {
@@ -422,20 +546,27 @@ export default function TaskPanel({ onMemoryChange }: Props) {
         } catch {
           return
         }
-        setEvents((prev) => [...prev, ev])
         if (ev.type === 'task_start') setModel(String(ev.data.model ?? ''))
-        if (ev.type === 'task_end') {
-          setState('done')
+        if (ev.type === 'task_end' || ev.type === 'task_stopped') {
+          // 终态事件也必须进 events：finalEvent（保存记忆按钮）依赖它
+          pushEvent(ev)
+          flushPending()
+          setState(ev.type === 'task_end' ? 'done' : 'stopped')
           onMemoryChange?.()
+          sessionStorage.removeItem('agentpulse_live_task')
           es.close()
           esRef.current = null
-        }
-        if (ev.type === 'error') {
+        } else if (ev.type === 'error') {
+          pushEvent(ev)
+          flushPending()
           setError(String(ev.data.message ?? 'task failed'))
           setState('error')
           onMemoryChange?.()
+          sessionStorage.removeItem('agentpulse_live_task')
           es.close()
           esRef.current = null
+        } else {
+          pushEvent(ev)
         }
       }
       es.onerror = () => {
@@ -448,9 +579,68 @@ export default function TaskPanel({ onMemoryChange }: Props) {
   }
 
   const stop = useCallback(() => {
+    const tid = sessionStorage.getItem('agentpulse_live_task')
+    if (tid) {
+      // 通知后端真正中止任务（best-effort：无法取消已在进行的同步 LLM 调用）
+      void api.stopTask(tid).catch(() => {})
+    }
     esRef.current?.close()
     esRef.current = null
-    setState((s) => (s === 'running' ? 'idle' : s))
+    sessionStorage.removeItem('agentpulse_live_task')
+    setState((s) => (s === 'running' ? 'stopped' : s))
+  }, [])
+
+  // 切回恢复：上次运行中的任务（sessionStorage 记录）重连 SSE 恢复进度。
+  // 后端 subscribe 会补发全部历史事件再流式推送实时事件，因此无论任务是
+  // 仍在运行还是已结束，切回都能拿到完整视图。
+  useEffect(() => {
+    const tid = sessionStorage.getItem('agentpulse_live_task')
+    if (!tid) return
+    let received = false
+    const es = new EventSource(`/api/tasks/${tid}/stream`)
+    esRef.current = es
+    es.onmessage = (msg) => {
+      received = true
+      let ev: TaskEvent
+      try {
+        ev = JSON.parse(msg.data) as TaskEvent
+      } catch {
+        return
+      }
+      if (ev.type === 'task_start') {
+        setModel(String(ev.data.model ?? ''))
+        setObjective(String(ev.data.objective ?? '')) // 输入框显示真实任务目标
+        setState('running')
+      }
+      if (ev.type === 'task_end') {
+        pushEvent(ev)
+        flushPending()
+        setState('done')
+        sessionStorage.removeItem('agentpulse_live_task')
+        es.close()
+        esRef.current = null
+      } else if (ev.type === 'error') {
+        pushEvent(ev)
+        flushPending()
+        setError(String(ev.data.message ?? 'task failed'))
+        setState('error')
+        sessionStorage.removeItem('agentpulse_live_task')
+        es.close()
+        esRef.current = null
+      } else {
+        pushEvent(ev)
+      }
+    }
+    es.onerror = () => {
+      if (!received) {
+        // 初始连接即失败（任务已被清理 / 后端重启）：放弃恢复
+        es.close()
+        esRef.current = null
+        sessionStorage.removeItem('agentpulse_live_task')
+      }
+    }
+    // SSE 连接与缓冲由既有的卸载 cleanup 统一关闭/flush
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const busy = state === 'running'
@@ -500,14 +690,33 @@ export default function TaskPanel({ onMemoryChange }: Props) {
     <div className="task-panel">
       <div className="task-composer">
         <div className="task-label">
-          任务目标 — Planner 拆解 → Specialist 执行 → Evaluator 验收
+          <span>任务目标 — Planner 拆解 → Specialist 执行 → Evaluator 验收</span>
+          {modelLabel && (
+            <span
+              className="task-model"
+              title="任务模型：各 Agent 独立配置，空 = 跟随 .env 基线（可在「设置」Tab 修改）"
+            >
+              🧠 {modelLabel}
+            </span>
+          )}
         </div>
         <div className="task-examples">
           <div className="ex-head">
             <div className="ex-title">
+              <button
+                type="button"
+                className="ex-collapse"
+                onClick={() => setExamplesCollapsed((v) => !v)}
+                title={examplesCollapsed ? '展开示例任务' : '折叠示例任务'}
+                aria-expanded={!examplesCollapsed}
+              >
+                {examplesCollapsed ? '▸' : '▾'}
+              </button>
               <span className="ex-title-main">示例任务</span>
               <span className="ex-title-sub">
-                单击填入 · 双击直接运行 · 共 {examples.length} 个
+                {examplesCollapsed
+                  ? `已折叠 · 共 ${examples.length} 个`
+                  : '单击填入 · 双击直接运行 · 共 ' + examples.length + ' 个'}
               </span>
             </div>
             <button
@@ -527,12 +736,12 @@ export default function TaskPanel({ onMemoryChange }: Props) {
             </button>
           </div>
 
-          {examples.length === 0 ? (
-            <div className="ex-empty">
-              示例已全部删除 — 点右上角「重新生成」补充一批新示例
-            </div>
-          ) : (
-            <div className="ex-grid">
+          {examplesCollapsed ? null : examples.length === 0 ? (
+              <div className="ex-empty">
+                示例已全部删除 — 点右上角「重新生成」补充一批新示例
+              </div>
+            ) : (
+              <div className="ex-grid">
               {examples.map((ex, i) => {
                 const cat = exCategory(ex)
                 const meta = CATEGORY_META[cat]
@@ -656,6 +865,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {state === 'stopped' && <div className="stopped-banner">⏹ 任务已停止</div>}
 
       <div className="task-stream">
         {items.length === 0 && state === 'idle' && (
@@ -721,12 +931,14 @@ export default function TaskPanel({ onMemoryChange }: Props) {
         )}
         {state === 'running' && (
           <div className="task-running">
-            <span className="spinner" /> agent 协作执行中…
+            <span className="spinner" /> agent 协作执行中{model ? ` · ${model}` : ''}
+            {totalTokens > 0 ? ` · ⚡ ${fmtNum(totalTokens)} tokens` : ''}…
           </div>
         )}
         {state === 'done' && (
           <div className="task-done-banner">
             ✅ 任务完成 · {toolCalls} 次工具调用{model ? ` · ${model}` : ''}
+            {finalTotal > 0 ? ` · ⚡ ${fmtNum(finalTotal)} tokens` : totalTokens > 0 ? ` · ⚡ ${fmtNum(totalTokens)} tokens` : ''}
           </div>
         )}
         {state === 'error' && <div className="task-done-banner err">✕ 任务失败</div>}
@@ -793,7 +1005,12 @@ export function GroupedCard({ item }: { item: GroupedItem }) {
     case 'subtask-done':
       return (
         <div className="step step-subtask-done">
-          <div className="step-title">✅ 子任务完成：{item.title}</div>
+          <div className="step-title">
+            ✅ 子任务完成：{item.title}
+            {item.usage?.total_tokens !== undefined && (
+              <span className="usage-tag">⚡ {fmtUsage(item.usage)}</span>
+            )}
+          </div>
           {item.summary && <div className="step-body">{item.summary}</div>}
         </div>
       )

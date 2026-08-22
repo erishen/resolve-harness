@@ -150,10 +150,12 @@ export type TaskEventType =
   | 'thought'
   | 'tool_call'
   | 'tool_result'
+  | 'produced_file'
   | 'subtask_done'
   | 'evaluation'
   | 're_plan'
   | 'task_end'
+  | 'task_stopped'
   | 'error'
 
 export interface Subtask {
@@ -228,4 +230,11 @@ export interface SandboxFile {
   mtime: number
   is_text: boolean
   kind: 'text' | 'markdown' | 'html' | 'image' | 'pdf' | 'csv' | 'json' | 'code' | 'binary'
+}
+
+/** 事件日志条目（审计 Tab / /api/events 返回）。 */
+export interface AuditEvent {
+  ts: string
+  type: string
+  data: Record<string, unknown>
 }

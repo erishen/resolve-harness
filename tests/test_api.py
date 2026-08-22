@@ -27,6 +27,9 @@ class FakeHarness:
                 "content": '[{"label": "数据清洗", "text": "生成 12 个带噪声的温度读数保存为 temps.csv，写脚本清洗异常值并输出均值与最大值"}]',
             },
             parse_tool_calls=lambda m: [],
+            # TaskRunner._task_model / start() read these from the router.
+            env_model="fake-model",
+            resolve_model=lambda m=None: m or "fake-model",
         )
         self.tools = ToolRegistry()
         self.sandbox_dir = None
@@ -491,7 +494,128 @@ class TestConfig:
             json={"parallel": 4, "max_replan_rounds": 1, "max_steps": 10, "agent_models": {}},
         )
         assert r.json()["agent_models"] == {}
-        assert h_runner_planner_model(c) is None
+        # cleared overrides fall back to the .env baseline (router.env_model),
+        # not None - the planner model is always explicit.
+        assert h_runner_planner_model(c) == h.router.env_model
+        h.close()
+
+
+def make_log_client(tmp_path: Path) -> tuple[TestClient, Any]:
+    """Build an app with a real Harness + ChatHistoryStore writing to temp dirs."""
+    from agentpulse.chat_history import ChatHistoryStore
+    from agentpulse.harness import Harness
+
+    h = Harness(memory_db=":memory:", sandbox_dir=str(tmp_path / "sb"))
+    c = TestClient(
+        create_app(harness=h, chat_history=ChatHistoryStore(str(tmp_path / "ch.db")))
+    )
+    return c, h
+
+
+class TestEvents:
+    """The audit feature exposes a turn/task event journal via /api/events.
+
+    EventLog isolation is handled by the autouse fixture in conftest.py, so the
+    app built here writes to a temp DB — these tests also guard against a real
+    data/event_log.db regression."""
+
+    def _app_with_log(self, tmp_path: Path) -> tuple[TestClient, Any]:
+        return make_log_client(tmp_path)
+
+    def test_scope_without_ref_lists_refs_and_recent(self, tmp_path: Path) -> None:
+        c, h = self._app_with_log(tmp_path)
+        log = c.app.state.event_log
+        log.append("chat", "r1", "thought", {"x": 1})
+        log.append("chat", "r2", "thought", {"x": 2})
+        res = c.get("/api/events?scope=chat")
+        assert res.status_code == 200
+        body = res.json()
+        # refs newest-first, distinct per ref (r2 appended last)
+        assert body["refs"] == ["r2", "r1"]
+        assert len(body["events"]) == 2
+        assert body["events"][0]["type"] == "thought"
+        h.close()
+
+    def test_ref_replays_single_thread(self, tmp_path: Path) -> None:
+        c, h = self._app_with_log(tmp_path)
+        log = c.app.state.event_log
+        log.append("chat", "r1", "thought", {"i": 0})
+        log.append("chat", "r1", "tool_call", {"i": 1})
+        log.append("chat", "r2", "thought", {"i": 9})
+        res = c.get("/api/events?scope=chat&ref=r1")
+        assert res.status_code == 200
+        body = res.json()
+        # replay mode returns no refs list, only the requested thread in order
+        assert body["refs"] == []
+        assert [e["type"] for e in body["events"]] == ["thought", "tool_call"]
+        h.close()
+
+    def test_scope_filter_isolates_task_from_chat(self, tmp_path: Path) -> None:
+        c, h = self._app_with_log(tmp_path)
+        log = c.app.state.event_log
+        log.append("chat", "r1", "thought", {})
+        log.append("task", "t1", "plan", {})
+        chat = c.get("/api/events?scope=chat").json()
+        task = c.get("/api/events?scope=task").json()
+        assert "r1" in chat["refs"] and "t1" in task["refs"]
+        assert "t1" not in chat["refs"] and "r1" not in task["refs"]
+        h.close()
+
+    def test_limit_is_bounded(self, tmp_path: Path) -> None:
+        c, h = self._app_with_log(tmp_path)
+        assert c.get("/api/events?scope=chat&limit=0").status_code == 422
+        assert c.get("/api/events?scope=chat&limit=10000").status_code == 422
+        h.close()
+
+    def test_bad_scope_rejected(self, tmp_path: Path) -> None:
+        c, h = self._app_with_log(tmp_path)
+        assert c.get("/api/events?scope=bogus").status_code == 422
+        h.close()
+
+    def test_fastpath_turn_is_logged_and_queryable(self, tmp_path: Path) -> None:
+        """End-to-end: a real chat turn emits an event the endpoint returns."""
+        c, h = self._app_with_log(tmp_path)
+        res = c.post("/api/chat", json={"message": "23 加 45"})
+        assert res.status_code == 200
+        listing = c.get("/api/events?scope=chat").json()
+        assert listing["refs"], "a chat turn should produce an audit ref"
+        ref = listing["refs"][0]
+        replay = c.get(f"/api/events?scope=chat&ref={ref}").json()
+        assert any(e["type"] == "fastpath" for e in replay["events"])
+        h.close()
+
+
+class TestClear:
+    """清空历史任务与事件日志的接口。"""
+
+    def test_clear_events_removes_all(self, tmp_path: Path) -> None:
+        c, h = make_log_client(tmp_path)
+        log = c.app.state.event_log
+        log.append("chat", "r1", "thought", {"x": 1})
+        log.append("task", "t1", "plan", {"x": 2})
+        res = c.delete("/api/events")
+        assert res.status_code == 200
+        assert res.json()["deleted"] == 2
+        assert c.get("/api/events?scope=chat").json()["refs"] == []
+        h.close()
+
+    def test_clear_tasks_removes_all(self, tmp_path: Path) -> None:
+        c, h = make_log_client(tmp_path)
+        runner = c.app.state.runner
+        # 往隔离后的临时持久化库插一条任务，验证清空接口
+        runner._db().execute(
+            "INSERT INTO task_history"
+            " (task_id, objective, model, status, created_at, error, events)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("fake1", "demo", "m", "done", "2024-01-01T00:00:00", None, "[]"),
+        )
+        runner._conn.commit()
+        runner._history = runner._load_history()  # 同步到内存，使 list() 可见
+        assert any(t["task_id"] == "fake1" for t in c.get("/api/tasks").json()["tasks"])
+        res = c.delete("/api/tasks")
+        assert res.status_code == 200
+        assert res.json()["deleted"] >= 1
+        assert c.get("/api/tasks").json()["tasks"] == []
         h.close()
 
 

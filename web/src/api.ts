@@ -1,6 +1,7 @@
 import type {
   AgentsResponse,
   ApprovalDecision,
+  AuditEvent,
   ChatMessage,
   ChatResponse,
   ChatTurn,
@@ -50,8 +51,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => request<{ status: string; model: string }>('/health'),
   state: () => request<StateResponse>('/state'),
-  chat: (message: string) =>
-    request<ChatResponse>('/chat', { method: 'POST', body: JSON.stringify({ message }) }),
+  chat: (message: string, model?: string) =>
+    request<ChatResponse>('/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message, ...(model ? { model } : {}) }),
+    }),
   chatHistory: () => request<{ turns: ChatTurn[] }>('/chat/history'),
   clearChatHistory: () =>
     request<{ deleted: number }>('/chat/history', { method: 'DELETE' }),
@@ -59,9 +63,9 @@ export const api = {
   agents: () => request<AgentsResponse>('/agents'),
   getConfig: () => request<AppConfig>('/config'),
   setConfig: (
-    parallel: number,
-    maxReplanRounds: number,
-    maxSteps: number,
+    parallel: number | null,
+    maxReplanRounds: number | null,
+    maxSteps: number | null,
     agentModels?: Record<string, string>,
     defaultModel?: string,
     models?: Record<string, ModelProfile>,
@@ -69,9 +73,9 @@ export const api = {
     request<AppConfig>('/config', {
       method: 'PUT',
       body: JSON.stringify({
-        parallel,
-        max_replan_rounds: maxReplanRounds,
-        max_steps: maxSteps,
+        ...(parallel != null ? { parallel } : {}),
+        ...(maxReplanRounds != null ? { max_replan_rounds: maxReplanRounds } : {}),
+        ...(maxSteps != null ? { max_steps: maxSteps } : {}),
         ...(agentModels !== undefined ? { agent_models: agentModels } : {}),
         ...(defaultModel !== undefined ? { default_model: defaultModel } : {}),
         ...(models !== undefined ? { models } : {}),
@@ -105,6 +109,19 @@ export const api = {
     }),
   getTask: (taskId: string) => request<TaskSnapshot>(`/tasks/${taskId}`),
   listTasks: () => request<{ tasks: TaskSnapshot[] }>('/tasks'),
+  clearTasks: () => request<{ deleted: number }>('/tasks', { method: 'DELETE' }),
+  stopTask: (taskId: string) =>
+    request<{ ok: boolean }>(`/tasks/${taskId}/stop`, { method: 'POST' }),
+  /** 事件日志（审计）：scope=chat|task；带 ref 返回该会话/任务的完整回放。 */
+  events: (scope?: string, ref?: string, limit?: number) => {
+    const q = new URLSearchParams()
+    if (scope) q.set('scope', scope)
+    if (ref) q.set('ref', ref)
+    if (limit) q.set('limit', String(limit))
+    const qs = q.toString()
+    return request<{ refs: string[]; events: AuditEvent[] }>(`/events${qs ? `?${qs}` : ''}`)
+  },
+  clearEvents: () => request<{ deleted: number }>('/events', { method: 'DELETE' }),
   plugins: () => request<{ plugins: PluginItem[] }>('/plugins'),
   deletePlugin: (name: string) =>
     request<{ ok: boolean }>(`/plugins/${encodeURIComponent(name)}`, {

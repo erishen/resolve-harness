@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, formatValue } from './api'
 import AgentsPanel from './components/AgentsPanel'
+import AuditPanel from './components/AuditPanel'
 import ChatPanel from './components/ChatPanel'
 import HistoryPanel from './components/HistoryPanel'
 import PluginPanel from './components/PluginPanel'
@@ -14,6 +15,7 @@ type Mode =
   | 'task'
   | 'chat'
   | 'history'
+  | 'audit'
   | 'plugins'
   | 'tools'
   | 'agents'
@@ -48,6 +50,37 @@ export default function App() {
   const [memories, setMemories] = useState<MemoryRow[]>([])
   const [online, setOnline] = useState(false)
   const [model, setModel] = useState('')
+
+  // 长期记忆栏宽度（左拉可扩展），持久化到 localStorage，范围 200–720px
+  const [sidebarW, setSidebarW] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('agentpulse.sidebarW'))
+    return saved >= 200 && saved <= 720 ? saved : 280
+  })
+  const sidebarWRef = useRef(sidebarW)
+  sidebarWRef.current = sidebarW
+  const sidebarDraggingRef = useRef(false)
+
+  const startSidebarDrag = (e: React.MouseEvent) => {
+    e.preventDefault()
+    sidebarDraggingRef.current = true
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+    const onMove = (ev: MouseEvent) => {
+      if (!sidebarDraggingRef.current) return
+      const w = window.innerWidth - ev.clientX
+      setSidebarW(Math.min(720, Math.max(200, w)))
+    }
+    const onUp = () => {
+      sidebarDraggingRef.current = false
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+      localStorage.setItem('agentpulse.sidebarW', String(sidebarWRef.current))
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   const loadMemories = useCallback(async () => {
     try {
@@ -110,7 +143,7 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className="app" style={{ gridTemplateColumns: `1fr ${sidebarW}px` }}>
       <section className="chat">
         <header className="chat-header">
           <span className={`status-dot ${online ? 'online' : ''}`} />
@@ -136,6 +169,12 @@ export default function App() {
               onClick={() => setMode('history')}
             >
               历史
+            </button>
+            <button
+              className={mode === 'audit' ? 'active' : ''}
+              onClick={() => setMode('audit')}
+            >
+              审计
             </button>
             <button
               className={mode === 'plugins' ? 'active' : ''}
@@ -171,12 +210,15 @@ export default function App() {
           {model && <span className="model-tag">{model}</span>}
         </header>
 
-        {mode === 'chat' ? (
+        <main className="chat-main">
+          {mode === 'chat' ? (
           <ChatPanel onAfterTurn={() => void loadMemories()} />
         ) : mode === 'task' ? (
           <TaskPanel onMemoryChange={() => void loadMemories()} />
         ) : mode === 'history' ? (
           <HistoryPanel />
+        ) : mode === 'audit' ? (
+          <AuditPanel />
         ) : mode === 'tools' ? (
           <ToolsPanel initialFilter={toolsFilter} />
         ) : mode === 'agents' ? (
@@ -195,7 +237,15 @@ export default function App() {
         ) : (
           <PluginPanel />
         )}
+        </main>
       </section>
+
+      <div
+        className="sidebar-resizer"
+        style={{ left: `calc(100% - ${sidebarW}px)` }}
+        onMouseDown={startSidebarDrag}
+        title="拖动调整长期记忆宽度"
+      />
 
       <aside className="sidebar">
         <div className="sidebar-header">

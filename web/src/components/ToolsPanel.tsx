@@ -78,6 +78,9 @@ export default function ToolsPanel({ initialFilter = 'all' }: ToolsPanelProps) {
       </div>
       {error && <div className="error-banner">{error}</div>}
       {tools.length === 0 && !error && <div className="empty">加载中…</div>}
+      {tools.length > 0 && filtered.length === 0 && (
+        <div className="empty">该筛选下暂无工具</div>
+      )}
       <div className="tools-list">
         {filtered.map((t) => {
           const props = (t.parameters?.properties ?? {}) as Record<string, { type?: string }>
@@ -86,9 +89,9 @@ export default function ToolsPanel({ initialFilter = 'all' }: ToolsPanelProps) {
             <div key={t.name} className="tool-card">
               <div className="tool-card-head">
                 <span className="tool-name">{t.name}</span>
-                {t.require_approval && <span className="tool-badge approve">🔒 需审批</span>}
-                {t.chat && <span className="tool-badge chat">聊天</span>}
-                {t.task && <span className="tool-badge task">任务</span>}
+                {t.require_approval && <span className="tool-badge--approve">🔒 需审批</span>}
+                {t.chat && <span className="tool-badge--chat">聊天</span>}
+                {t.task && <span className="tool-badge--task">任务</span>}
               </div>
               <div className="tool-desc">{t.description}</div>
               {FASTPATH_NOTES[t.name] && (

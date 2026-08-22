@@ -147,3 +147,40 @@ class TestDeleteExamples:
         second = generate_fresh_examples(_FakeHarness("[]"))
         assert deleted not in [e["text"] for e in second]
 
+
+class TestFastpathPluginExample:
+    """「闰年插件」示例应走 codegen 流水线：本身不命中内置 fast-path 匹配器，
+    一旦有 detect 检测器被持久化到插件目录，运行时 load_plugins 即零模型命中。"""
+
+    def test_example_exists(self) -> None:
+        assert any(e["label"] == "闰年插件" for e in BUILTIN_EXAMPLES)
+
+    def test_falls_through_to_codegen(self, tmp_path) -> None:
+        from agentpulse.fastpath import try_fast_answer
+
+        ex = next(e for e in BUILTIN_EXAMPLES if e["label"] == "闰年插件")
+        # 未加载任何插件时，内置匹配器都不命中 → 任务会进入 codegen 生成检测器
+        assert try_fast_answer(ex["text"], plugin_dir=str(tmp_path)) is None
+
+    def test_runtime_loads_and_uses_plugin(self, tmp_path) -> None:
+        from agentpulse.codegen import save_plugin
+        from agentpulse.fastpath import try_fast_answer
+
+        plugin = (
+            "def detect(text):\n"
+            "    if '闰年' not in text:\n"
+            "        return None\n"
+            "    digits = ''.join(ch for ch in text if ch.isdigit())\n"
+            "    if len(digits) < 4:\n"
+            "        return None\n"
+            "    y = int(digits[:4])\n"
+            "    leap = (y % 4 == 0 and y % 100 != 0) or (y % 400 == 0)\n"
+            "    return f'{y} 是闰年。' if leap else f'{y} 不是闰年。'\n"
+        )
+        # codegen 成功后会经 save_plugin 把检测器持久化到 data/fastpath_plugins
+        save_plugin(plugin, plugin_dir=str(tmp_path), trigger="闰年判断")
+        ans = try_fast_answer("2024 年是闰年吗", plugin_dir=str(tmp_path))
+        assert ans is not None
+        assert ans.method == "plugin"
+        assert "闰年" in ans.answer
+
