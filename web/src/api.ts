@@ -70,24 +70,35 @@ function askForToken(): Promise<string | null> {
 }
 
 async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
+  // 记下本次实际使用的 Token：并发场景下另一个请求可能刚保存了新值
+  const attempted = getApiToken()
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  const token = getApiToken()
-  if (token) headers.Authorization = `Bearer ${token}`
+  if (attempted) headers.Authorization = `Bearer ${attempted}`
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: { ...headers, ...(init?.headers as Record<string, string>) },
   })
-  // 后端开启了 API_TOKEN 而本地没配 → 问一次并存下，重试本次请求
   if (res.status === 401 && !retried) {
-    const input = await askForToken()
-    if (input !== null && input.trim()) {
-      setApiToken(input)
+    const current = getApiToken()
+    if (current && current !== attempted) {
+      // 同批其他请求刚存下了新 Token（本请求发出时还没有）→ 直接用它重试，不弹框
       return request<T>(path, init, true)
     }
+    if (!attempted) {
+      // 只有从未配置过 Token 才询问；输一次即长期生效（存 localStorage）
+      const input = await askForToken()
+      if (input !== null && input.trim()) {
+        setApiToken(input)
+        return request<T>(path, init, true)
+      }
+    }
+    // 走到这里 = 已配置但仍 401：Token 不对。不再反复弹框，报错引导去设置页。
   }
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    throw new Error(`${res.status} ${body.slice(0, 200)}`)
+    const hint =
+      res.status === 401 ? 'API Token 无效，请到「设置 → API Token」修改 ' : ''
+    throw new Error(`${res.status} ${hint}${body.slice(0, 160)}`)
   }
   return res.json() as Promise<T>
 }
@@ -200,7 +211,18 @@ export const api = {
     ),
   sandboxClearHistory: () =>
     request<{ sandbox_history: string[] }>('/sandbox/history/all', { method: 'DELETE' }),
-  sandboxRawUrl: (path: string) => `/api/sandbox/raw?path=${encodeURIComponent(path)}`,
+  // <img>/<iframe> 无法携带 Authorization 头，经鉴权取回字节再转 ObjectURL 使用
+  sandboxRawObjectUrl: async (path: string): Promise<string> => {
+    const headers: Record<string, string> = {}
+    const t = getApiToken()
+    if (t) headers.Authorization = `Bearer ${t}`
+    const res = await fetch(
+      `${BASE}/sandbox/raw?path=${encodeURIComponent(path)}`,
+      { headers },
+    )
+    if (!res.ok) throw new Error(String(res.status))
+    return URL.createObjectURL(await res.blob())
+  },
   sandboxFile: (path: string) =>
     request<{ path: string; content: string; size: number }>(
       `/sandbox/content?path=${encodeURIComponent(path)}`,
@@ -235,4 +257,58 @@ export function formatValue(value: unknown): string {
   if (value === null || value === undefined) return String(value)
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
+}
+
+/** 任务事件流句柄：close() 主动断开（stop / 组件卸载 cleanup）。 */
+export interface StreamHandle {
+  close: () => void
+}
+
+/**
+ * 打开任务事件流（SSE）。不用 EventSource：它无法携带 Authorization 头，
+ * 后端开启 API Token 校验后会被 401 拦截，故用 fetch + ReadableStream
+ * 手工解析 text/event-stream（后端帧格式固定为 `data: {json}\n\n`）。
+ * 流正常结束（终态事件后服务端关闭）不触发 onError，状态由事件本身驱动。
+ */
+export function openTaskStream(
+  taskId: string,
+  onMessage: (data: string) => void,
+  onError?: () => void,
+): StreamHandle {
+  const ctrl = new AbortController()
+  void (async () => {
+    try {
+      const headers: Record<string, string> = { Accept: 'text/event-stream' }
+      const t = getApiToken()
+      if (t) headers.Authorization = `Bearer ${t}`
+      const res = await fetch(`${BASE}/tasks/${encodeURIComponent(taskId)}/stream`, {
+        headers,
+        signal: ctrl.signal,
+      })
+      if (!res.ok || !res.body) {
+        onError?.()
+        return
+      }
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        let sep: number
+        while ((sep = buf.indexOf('\n\n')) !== -1) {
+          const frame = buf.slice(0, sep)
+          buf = buf.slice(sep + 2)
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('data:')) onMessage(line.slice(5).replace(/^ /, ''))
+          }
+        }
+      }
+    } catch {
+      // 主动 close() 走 abort 分支静默；其余（网络断开等）交给调用方兜底
+      onError?.()
+    }
+  })()
+  return { close: () => ctrl.abort() }
 }

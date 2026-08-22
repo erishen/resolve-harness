@@ -111,6 +111,27 @@ export default function SandboxPanel() {
   const [saving, setSaving] = useState(false)
   // bumped after every save so an HTML <iframe> re-renders with fresh content
   const [renderNonce, setRenderNonce] = useState(0)
+  // <img>/<iframe> 带不了 Authorization 头：经 api 取回字节转 ObjectURL 预览
+  const [rawObjUrl, setRawObjUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    let created: string | null = null
+    setRawObjUrl(null)
+    const k = selected?.kind
+    if (selected && (k === 'image' || k === 'pdf' || k === 'html')) {
+      api.sandboxRawObjectUrl(selected.path)
+        .then((u) => {
+          created = u
+          if (!cancelled) setRawObjUrl(u)
+        })
+        .catch(() => {})
+    }
+    return () => {
+      cancelled = true
+      if (created) URL.revokeObjectURL(created)
+    }
+  }, [selected?.path, selected?.kind, renderNonce])
 
   const load = useCallback(async () => {
     try {
@@ -443,7 +464,7 @@ export default function SandboxPanel() {
               </div>
               <img
                 className="sandbox-img"
-                src={api.sandboxRawUrl(selected.path)}
+                src={rawObjUrl ?? undefined}
                 alt={selected.path}
               />
             </div>
@@ -456,7 +477,7 @@ export default function SandboxPanel() {
               </div>
               <iframe
                 className="sandbox-iframe"
-                src={api.sandboxRawUrl(selected.path)}
+                src={rawObjUrl ?? undefined}
                 title={selected.path}
                 sandbox=""
               />
@@ -498,7 +519,7 @@ export default function SandboxPanel() {
                 <iframe
                   key={renderNonce}
                   className="sandbox-iframe"
-                  src={api.sandboxRawUrl(selected.path)}
+                  src={rawObjUrl ?? undefined}
                   title={selected.path}
                   sandbox=""
                 />

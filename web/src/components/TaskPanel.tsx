@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, type AppConfig } from '../api'
+import { api, openTaskStream, type AppConfig, type StreamHandle } from '../api'
 import { safeMarkdown, safeHighlight } from '../safeHtml'
 import { fmtNum, fmtUsage } from '../types'
 import type { Subtask, TaskEvent, UsageInfo } from '../types'
@@ -289,7 +289,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
   const [saveMemSrc, setSaveMemSrc] = useState<{ title: string; body: string } | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const esRef = useRef<EventSource | null>(null)
+  const esRef = useRef<StreamHandle | null>(null)
   const delTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // SSE 高频事件缓冲：并行 Specialist 事件密集时合并为每 ~50ms 一次批量渲染，
   // 避免每个事件触发一次全量重渲染（会卡住 Tab 切换等交互）。
@@ -536,12 +536,10 @@ export default function TaskPanel({ onMemoryChange }: Props) {
       const { task_id } = await api.createTask(goal)
       // 记录当前运行任务：切 Tab 再切回时据此恢复进度
       sessionStorage.setItem('resolve_harness_live_task', task_id)
-      const es = new EventSource(`/api/tasks/${task_id}/stream`)
-      esRef.current = es
-      es.onmessage = (msg) => {
+      esRef.current = openTaskStream(task_id, (data) => {
         let ev: TaskEvent
         try {
-          ev = JSON.parse(msg.data) as TaskEvent
+          ev = JSON.parse(data) as TaskEvent
         } catch {
           return
         }
@@ -553,7 +551,7 @@ export default function TaskPanel({ onMemoryChange }: Props) {
           setState(ev.type === 'task_end' ? 'done' : 'stopped')
           onMemoryChange?.()
           sessionStorage.removeItem('resolve_harness_live_task')
-          es.close()
+          esRef.current?.close()
           esRef.current = null
         } else if (ev.type === 'error') {
           pushEvent(ev)
@@ -562,15 +560,13 @@ export default function TaskPanel({ onMemoryChange }: Props) {
           setState('error')
           onMemoryChange?.()
           sessionStorage.removeItem('resolve_harness_live_task')
-          es.close()
+          esRef.current?.close()
           esRef.current = null
         } else {
           pushEvent(ev)
         }
-      }
-      es.onerror = () => {
-        /* server closes stream after terminal events; state driven by events */
-      }
+      })
+      /* 流异常结束无需处理：终态由事件驱动（与原 EventSource.onerror 逻辑一致） */
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setState('error')
@@ -596,48 +592,49 @@ export default function TaskPanel({ onMemoryChange }: Props) {
     const tid = sessionStorage.getItem('resolve_harness_live_task')
     if (!tid) return
     let received = false
-    const es = new EventSource(`/api/tasks/${tid}/stream`)
-    esRef.current = es
-    es.onmessage = (msg) => {
-      received = true
-      let ev: TaskEvent
-      try {
-        ev = JSON.parse(msg.data) as TaskEvent
-      } catch {
-        return
-      }
-      if (ev.type === 'task_start') {
-        setModel(String(ev.data.model ?? ''))
-        setObjective(String(ev.data.objective ?? '')) // 输入框显示真实任务目标
-        setState('running')
-      }
-      if (ev.type === 'task_end') {
-        pushEvent(ev)
-        flushPending()
-        setState('done')
-        sessionStorage.removeItem('resolve_harness_live_task')
-        es.close()
-        esRef.current = null
-      } else if (ev.type === 'error') {
-        pushEvent(ev)
-        flushPending()
-        setError(String(ev.data.message ?? 'task failed'))
-        setState('error')
-        sessionStorage.removeItem('resolve_harness_live_task')
-        es.close()
-        esRef.current = null
-      } else {
-        pushEvent(ev)
-      }
-    }
-    es.onerror = () => {
-      if (!received) {
-        // 初始连接即失败（任务已被清理 / 后端重启）：放弃恢复
-        es.close()
-        esRef.current = null
-        sessionStorage.removeItem('resolve_harness_live_task')
-      }
-    }
+    esRef.current = openTaskStream(
+      tid,
+      (data) => {
+        received = true
+        let ev: TaskEvent
+        try {
+          ev = JSON.parse(data) as TaskEvent
+        } catch {
+          return
+        }
+        if (ev.type === 'task_start') {
+          setModel(String(ev.data.model ?? ''))
+          setObjective(String(ev.data.objective ?? '')) // 输入框显示真实任务目标
+          setState('running')
+        }
+        if (ev.type === 'task_end') {
+          pushEvent(ev)
+          flushPending()
+          setState('done')
+          sessionStorage.removeItem('resolve_harness_live_task')
+          esRef.current?.close()
+          esRef.current = null
+        } else if (ev.type === 'error') {
+          pushEvent(ev)
+          flushPending()
+          setError(String(ev.data.message ?? 'task failed'))
+          setState('error')
+          sessionStorage.removeItem('resolve_harness_live_task')
+          esRef.current?.close()
+          esRef.current = null
+        } else {
+          pushEvent(ev)
+        }
+      },
+      () => {
+        if (!received) {
+          // 初始连接即失败（任务已被清理 / 后端重启 / Token 未配置）：放弃恢复
+          esRef.current?.close()
+          esRef.current = null
+          sessionStorage.removeItem('resolve_harness_live_task')
+        }
+      },
+    )
     // SSE 连接与缓冲由既有的卸载 cleanup 统一关闭/flush
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -1249,7 +1246,8 @@ export function FilePreviewModal({
 }) {
   const [content, setContent] = useState<string | null>(null)
   const [error, setError] = useState('')
-  const [imgSrc, setImgSrc] = useState(api.sandboxRawUrl(path))
+  // <img>/<iframe> 带不了鉴权头：经 api 取回字节转 ObjectURL（含旧路径 fallback）
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const kind = previewKind(path)
 
   // pre-isolation history tasks wrote to the sandbox root; retry the bare path
@@ -1267,9 +1265,34 @@ export function FilePreviewModal({
   }
 
   useEffect(() => {
-    setImgSrc(api.sandboxRawUrl(path))
     let cancelled = false
-    if (kind === 'image' || kind === 'pdf') return
+    let created: string | null = null
+    setMediaUrl(null)
+    if (kind === 'image' || kind === 'pdf') {
+      // 二进制预览：鉴权取字节 → ObjectURL；图片失败时退回旧根路径
+      const load = async (): Promise<void> => {
+        try {
+          const u = await api.sandboxRawObjectUrl(path)
+          created = u
+          if (!cancelled) setMediaUrl(u)
+        } catch {
+          if (kind === 'image' && fallback && fallback !== path) {
+            try {
+              const u2 = await api.sandboxRawObjectUrl(fallback)
+              created = u2
+              if (!cancelled) setMediaUrl(u2)
+            } catch {
+              /* 保持空态 */
+            }
+          }
+        }
+      }
+      void load()
+      return () => {
+        cancelled = true
+        if (created) URL.revokeObjectURL(created)
+      }
+    }
     tryRead()
       .then((c) => {
         if (!cancelled) setContent(c)
@@ -1304,17 +1327,13 @@ export function FilePreviewModal({
           {error ? (
             <div className="file-modal-error">无法读取文件：{error}</div>
           ) : kind === 'image' ? (
-            <img
-              src={imgSrc}
-              alt={name}
-              onError={() => {
-                if (fallback && fallback !== path && imgSrc !== api.sandboxRawUrl(fallback)) {
-                  setImgSrc(api.sandboxRawUrl(fallback))
-                }
-              }}
-            />
+            mediaUrl ? (
+              <img src={mediaUrl} alt={name} />
+            ) : (
+              <div className="file-modal-loading">加载中…</div>
+            )
           ) : kind === 'pdf' ? (
-            <iframe src={api.sandboxRawUrl(path)} title={name} sandbox="" />
+            <iframe src={mediaUrl ?? undefined} title={name} sandbox="" />
           ) : content === null ? (
             <div className="file-modal-loading">加载中…</div>
           ) : kind === 'markdown' ? (
