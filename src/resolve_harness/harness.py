@@ -28,6 +28,11 @@ from typing import Any, Callable
 
 from langgraph.types import Command
 
+# 项目默认沙箱根目录（data/sandbox，相对项目根）；沙箱 Tab 的「项目沙箱」复位
+# 以及 Harness(sandbox_dir=None) 都指向这里。
+def _default_sandbox_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / "data" / "sandbox"
+
 from .config import Settings
 from .event_log import EventLog
 from .graph.loop import build_loop
@@ -136,7 +141,7 @@ class Harness:
         self.chat_tools = ToolRegistry()
         if register_builtin_tools:
             if sandbox_dir is None:
-                sandbox_dir = str(Path(__file__).resolve().parents[2] / "data" / "sandbox")
+                sandbox_dir = str(_default_sandbox_dir())
             register_builtins(self.tools, self.long_term, sandbox_dir=sandbox_dir)
             # chat subset: only time / long-term memory / fetch
             for tool in self.tools:

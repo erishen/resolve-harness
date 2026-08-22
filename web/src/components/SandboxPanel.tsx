@@ -233,6 +233,14 @@ export default function SandboxPanel() {
     [load],
   )
 
+  // 快捷目录：后端 set_sandbox_dir 已支持 ~ 展开与绝对化；「项目沙箱」发送哨兵复位默认。
+  const QUICK_DIRS: { label: string; path: string }[] = [
+    { label: '桌面', path: '~/Desktop' },
+    { label: '下载', path: '~/Downloads' },
+    { label: '文稿', path: '~/Documents' },
+    { label: '项目沙箱', path: '__default__' },
+  ]
+
   // 类型过滤：选中分组只显示匹配 kind 的文件；每类计数（全部分组计数随文件变化）。
   const filteredFiles = useMemo(() => {
     if (filter === 'all') return files
@@ -291,6 +299,19 @@ export default function SandboxPanel() {
               >
                 📁 切换
               </button>
+            </div>
+            <div className="sandbox-history">
+              <span className="sandbox-hist-label">快捷选择：</span>
+              {QUICK_DIRS.map((d) => (
+                <button
+                  key={d.path}
+                  type="button"
+                  className="sandbox-hist-chip"
+                  onClick={() => void applyLocation(d.path)}
+                >
+                  {d.label}
+                </button>
+              ))}
             </div>
             {history.length > 0 && (
               <div className="sandbox-history">

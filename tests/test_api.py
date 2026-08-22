@@ -349,6 +349,27 @@ class TestSandbox:
             str(dir_b.resolve()),
         ]
 
+    def test_sandbox_location_default_sentinel_resets(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from resolve_harness.harness import Harness, _default_sandbox_dir
+        import resolve_harness.api as _api
+
+        dir_a = tmp_path / "a"
+        monkeypatch.setattr("resolve_harness.api._save_config", lambda cfg: None)
+        _real_cfg = _api._load_config()
+        monkeypatch.setattr(
+            "resolve_harness.api._load_config",
+            lambda: {**_real_cfg, "sandbox_history": []},
+        )
+
+        h = Harness(sandbox_dir=str(dir_a))
+        c = TestClient(create_app(harness=h))
+        res = c.put("/api/sandbox/location", json={"path": "__default__"})
+        assert res.status_code == 200
+        assert res.json()["sandbox_dir"] == str(_default_sandbox_dir().resolve())
+        assert h.sandbox_dir == str(_default_sandbox_dir().resolve())
+
     def test_sandbox_location_empty_path_rejected(self, tmp_path: Path) -> None:
         from resolve_harness.harness import Harness
 

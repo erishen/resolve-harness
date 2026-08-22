@@ -50,7 +50,7 @@ from pydantic import BaseModel, Field
 
 from .chat_history import ChatHistoryStore
 from .event_log import EventLog
-from .harness import Harness
+from .harness import Harness, _default_sandbox_dir
 from .llm import LLMError, usage_diff, usage_snapshot
 from .tasks import TaskRunner
 
@@ -187,6 +187,10 @@ class SandboxLocation(BaseModel):
     """Set the sandbox root directory at runtime (Sandbox tab hot-switch)."""
 
     path: str = Field(min_length=1)
+
+
+# 复位到项目默认沙箱（data/sandbox）的哨兵值，由前端「项目沙箱」快捷按钮发送。
+DEFAULT_SANDBOX_SENTINEL = "__default__"
 
 
 class ApprovalDecision(BaseModel):
@@ -882,11 +886,16 @@ def _register_sandbox_routes(app: FastAPI) -> None:
         """热切换沙箱根目录（沙箱 Tab）：更新 harness 并把重绑后的工具生效，
         记录到历史（去重、最新在前）并持久化到 data/config.json。"""
         h: Harness = app.state.harness
-        new_dir = Path(req.path).expanduser().resolve()
+        target = (
+            _default_sandbox_dir()
+            if req.path == DEFAULT_SANDBOX_SENTINEL
+            else Path(req.path).expanduser()
+        )
         try:
-            h.set_sandbox_dir(str(new_dir))
+            h.set_sandbox_dir(str(target))
         except OSError as exc:
             raise HTTPException(status_code=400, detail=f"无法创建/访问目录：{exc}")
+        new_dir = target.resolve()
         history = [str(new_dir)] + [
             p for p in app.state.sandbox_history if p != str(new_dir)
         ]
