@@ -256,6 +256,9 @@ examples/          chat.py (REPL) / tool_demo.py (script demo) / tasks.md (PSE d
 tests/             memory / tools / loop / api / tasks / fastpath / codegen / examples offline tests
 ```
 
+## Related Articles
+- [If It Can Be Computed, Never Call a Model: The Deterministic Fast Path Runtime of resolve-harness](https://erishen.cn/resolve_harness-en/)
+
 ## License
 
 MIT

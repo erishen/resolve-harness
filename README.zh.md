@@ -258,3 +258,6 @@ tests/             memory / tools / loop / api / tasks / fastpath / codegen / ex
 ## 许可证
 
 MIT
+
+## 相关文章
+- [能算的绝不调模型：resolve-harness 的确定性 Fast Path 运行时](https://erishen.cn/resolve_harness/)
