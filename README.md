@@ -45,20 +45,20 @@ One-command start of both frontend and backend (recommended):
 make dev
 ```
 
-`make dev` will: ① first clean up leftover processes occupying `:8000` / `:5173` → ② start the FastAPI backend and wait for health check → ③ then start the Vite frontend → open http://localhost:5173. Ctrl-C stops both at once.
+`make dev` will: ① first clean up leftover processes occupying `:8899` / `:5175` → ② start the FastAPI backend and wait for health check → ③ then start the Vite frontend → open http://localhost:5175. Ctrl-C stops both at once.
 
 You can also start them manually in two terminals:
 
 ```bash
-# Terminal 1: FastAPI backend (http://127.0.0.1:8000, interactive docs at /docs)
+# Terminal 1: FastAPI backend (http://127.0.0.1:8899, interactive docs at /docs)
 make api
 
-# Terminal 2: Vite frontend (http://localhost:5173)
+# Terminal 2: Vite frontend (http://localhost:5175)
 cd web && pnpm install        # first time
 make web-dev
 ```
 
-Open http://localhost:5173 to use it. There are **eight tabs** in total (Chat is the default, first one):
+Open http://localhost:5175 to use it. There are **eight tabs** in total (Chat is the default, first one):
 
 - **Tasks** (multi-agent workbench): the top shows example cards (built-in + a "regenerate" button that asks the model to generate a fresh batch of executable examples); built-in examples cover arithmetic / docs / code / web scraping (overseas JD listings, A-share live quotes, USD exchange rate — all via the `fetch` tool); cards can be single-click to fill, double-click to run directly, or hover to delete — deletion is persisted (both built-in and generated can be deleted and won't reappear after refresh), and deleted examples are injected as a "negative list" into the regenerate prompt to stop the model producing similar tasks; after entering a goal, **Planner breaks it into subtasks → Specialists execute one by one (tool loop) → Evaluator accepts** (auto-sent back for replanning on failure, at most 1 round) → **Reporter compiles the deliverable**. Every step (plan / subtask progress / thought / tool call / acceptance conclusion) streams live as a task tree via SSE, and the deliverable supports markdown. If the goal is a deterministic query (e.g. "compute 2+3"), it goes straight through the Fast Path and returns instantly, with the task tree still fully shown and labeled "zero-model".
 - **Chat**: one question one answer; tool calls show as small tags below the reply; deterministic queries also go through Fast Path, no need to wait for the model.
@@ -251,7 +251,7 @@ src/resolve_harness/
   memory/          short + long-term memory (long-term SQLite thread-safe)
   tools/           ToolRegistry + built-in tools (incl. sandbox file tool fs.py)
   graph/           AgentState + build_loop (LangGraph graph, supports emit event callback)
-web/               Vite + React + TS frontend (task/chat/plugin/sandbox four tabs, vite proxy /api → :8000)
+web/               Vite + React + TS frontend (task/chat/plugin/sandbox four tabs, vite proxy /api → :8899)
 examples/          chat.py (REPL) / tool_demo.py (script demo) / tasks.md (PSE demo example goals)
 tests/             memory / tools / loop / api / tasks / fastpath / codegen / examples offline tests
 ```

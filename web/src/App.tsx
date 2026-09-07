@@ -95,10 +95,10 @@ function TokenGate() {
       setBad(
         res.status === 401
           ? '❌ Token 不正确：需与后端 .env 的 API_TOKEN 完全一致'
-          : `❌ 后端响应异常（HTTP ${res.status}）——请确认地址栏是 http://localhost:5173`,
+          : `❌ 后端响应异常（HTTP ${res.status}）——请确认地址栏是 http://localhost:5175`,
       )
     } catch {
-      setBad('❌ 无法连接后端：请从 http://localhost:5173 访问（不要直接双击打开 dist 文件）')
+      setBad('❌ 无法连接后端：请从 http://localhost:5175 访问（不要直接双击打开 dist 文件）')
     } finally {
       setChecking(false)
     }

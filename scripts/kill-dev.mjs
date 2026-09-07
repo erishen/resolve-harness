@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
  * Kill leftover resolve_harness dev processes so `make dev` always starts from a
- * clean slate: anything bound to the backend port :8000 or the Vite port
- * :5173 (uvicorn / vite from previous runs).
+ * clean slate: anything bound to the backend port :8899 or the Vite port
+ * :5175 (uvicorn / vite from previous runs).
  * Cross-platform (macOS / Linux / Windows).
  */
 import { spawnSync } from 'node:child_process'
 
-const PORTS = [8000, 5173]
+const PORTS = [8899, 5175]
 const isWin = process.platform === 'win32'
 
 function sh(cmd, args) {
@@ -72,6 +72,6 @@ for (const pid of collect()) {
   }
 }
 
-if (killed) console.log(`[kill-dev] 已清理 ${killed} 个占用 :8000/:5173 的残留进程`)
+if (killed) console.log(`[kill-dev] 已清理 ${killed} 个占用 :8899/:5175 的残留进程`)
 else console.log('[kill-dev] 端口干净，无需清理')
 process.exit(0)

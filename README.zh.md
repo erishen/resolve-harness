@@ -45,20 +45,20 @@ uv run python examples/tool_demo.py   # 脚本演示：时间/计算/记忆
 make dev
 ```
 
-`make dev` 会：① 先清理占用 `:8000` / `:5173` 的残留进程 → ② 启动 FastAPI 后端并等健康检查通过 → ③ 再启动 Vite 前端 → 打开 http://localhost:5173。Ctrl-C 一次停止两者。
+`make dev` 会：① 先清理占用 `:8899` / `:5175` 的残留进程 → ② 启动 FastAPI 后端并等健康检查通过 → ③ 再启动 Vite 前端 → 打开 http://localhost:5175。Ctrl-C 一次停止两者。
 
 也可以分两个终端手动起：
 
 ```bash
-# 终端 1：FastAPI 后端（http://127.0.0.1:8000，交互文档在 /docs）
+# 终端 1：FastAPI 后端（http://127.0.0.1:8899，交互文档在 /docs）
 make api
 
-# 终端 2：Vite 前端（http://localhost:5173）
+# 终端 2：Vite 前端（http://localhost:5175）
 cd web && pnpm install        # 首次
 make web-dev
 ```
 
-打开 http://localhost:5173 即可使用，共**八个 Tab**（聊天为默认，第一个）：
+打开 http://localhost:5175 即可使用，共**八个 Tab**（聊天为默认，第一个）：
 
 - **任务**（多 Agent 工作台）：顶部是示例卡片（内置 + 「重新生成」按钮让模型生成一批新的、可执行的示例），内置示例覆盖计算 / 文档 / 代码 / 联网抓取（海外 JD 列表、A 股实时行情、美元汇率，均走 fetch 工具）等类型；卡片可单击填入、双击直接运行，也可 hover 删除——删除会持久化（内置/生成都能删，刷新后不再出现），且已删示例会作为「负面清单」注入重新生成的 prompt，避免模型再产出类似任务；输入一个目标后，**Planner 拆解子任务 → Specialist 逐个执行（工具循环）→ Evaluator 验收**（不达标自动打回重规划，最多 1 轮）→ **Reporter 汇成交付**。每一步（计划 / 子任务进度 / 思考 / 工具调用 / 验收结论）通过 SSE 实时流式显示为任务树，交付支持 markdown。若目标是确定性查询（如「计算 2+3」），会直接走 Fast Path 秒回，任务树依然完整展示并标注「零模型」。
 - **聊天**：一问一答，工具调用以回复下方的小标签展示；确定性查询同样走 Fast Path，无需等模型。
@@ -250,7 +250,7 @@ src/resolve_harness/
   memory/          短期 + 长期记忆（长期 SQLite 线程安全）
   tools/           ToolRegistry + 内置工具（含沙箱文件工具 fs.py）
   graph/           AgentState + build_loop（LangGraph 图，支持 emit 事件回调）
-web/               Vite + React + TS 前端（任务/聊天/插件/沙箱 四 Tab，vite proxy /api → :8000）
+web/               Vite + React + TS 前端（任务/聊天/插件/沙箱 四 Tab，vite proxy /api → :8899）
 examples/          chat.py（REPL）/ tool_demo.py（脚本演示）/ tasks.md（PSE 演示示例目标）
 tests/             memory / tools / loop / api / tasks / fastpath / codegen / examples 离线测试
 ```

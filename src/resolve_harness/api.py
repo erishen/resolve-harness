@@ -6,7 +6,7 @@ session transcript, so a frontend can render the agent's internal steps.
 Task mode (TaskRunner) streams every inner step over SSE.
 
 Run (dev):
-    uv run uvicorn resolve_harness.api:app --reload --port 8000
+    uv run uvicorn resolve_harness.api:app --reload --port 8899
 
 Endpoints:
     GET  /api/health                 -> service info
@@ -60,8 +60,8 @@ logger = logging.getLogger(__name__)
 
 # Vite dev server default port; the frontend proxies /api here in dev.
 _ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
+    "http://localhost:5175",
+    "http://127.0.0.1:5175",
 ]
 
 

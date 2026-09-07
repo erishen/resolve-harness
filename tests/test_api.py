@@ -193,7 +193,7 @@ class TestApiTokenAuth:
         r = c.options(
             "/api/chat",
             headers={
-                "Origin": "http://localhost:5173",
+                "Origin": "http://localhost:5175",
                 "Access-Control-Request-Method": "POST",
             },
         )

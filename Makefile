@@ -6,9 +6,9 @@
 #   make test       # run offline unit tests
 #   make chat       # interactive REPL (terminal)
 #   make demo       # scripted tool demo
-#   make dev        # ONE-SHOT: clean :8000/:5173 -> backend first -> frontend
-#   make api        # start FastAPI backend on :8000 only
-#   make web-dev    # start Vite dev server on :5173 only (needs `cd web && pnpm install` first)
+#   make dev        # ONE-SHOT: clean :8899/:5175 -> backend first -> frontend
+#   make api        # start FastAPI backend on :8899 only
+#   make web-dev    # start Vite dev server on :5175 only (needs `cd web && pnpm install` first)
 #   make web-build  # build frontend to web/dist
 #   make env        # create .env from template (never overwrites)
 #   make clean      # remove caches only
@@ -17,7 +17,7 @@
 #
 # Web UI (make dev, or two terminals):
 #   terminal 1: make api
-#   terminal 2: make web-dev   -> open http://localhost:5173
+#   terminal 2: make web-dev   -> open http://localhost:5175
 # ===========================================================================
 
 UV ?= uv
@@ -42,13 +42,13 @@ chat: ## 交互式对话（REPL）
 demo: ## 脚本演示：时间 / 计算 / 记忆
 	$(UV) run python examples/tool_demo.py
 
-dev: ## 一键启动前后端：先清理 :8000/:5173 残留，后端先起、健康检查通过后再起前端，Ctrl-C 全部停止
+dev: ## 一键启动前后端：先清理 :8899/:5175 残留，后端先起、健康检查通过后再起前端，Ctrl-C 全部停止
 	@bash scripts/dev.sh
 
-api: ## 启动 FastAPI 后端（http://127.0.0.1:8000，文档 /docs）
-	$(UV) run python -m uvicorn resolve_harness.api:app --reload --port 8000
+api: ## 启动 FastAPI 后端（http://127.0.0.1:8899，文档 /docs）
+	$(UV) run python -m uvicorn resolve_harness.api:app --reload --port 8899 --no-access-log
 
-web-dev: ## 启动 Vite 前端（http://localhost:5173，需先 pnpm install）
+web-dev: ## 启动 Vite 前端（http://localhost:5175，需先 pnpm install）
 	cd web && $(PNPM) dev
 
 web-build: ## 构建前端到 web/dist
