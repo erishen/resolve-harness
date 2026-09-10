@@ -985,4 +985,43 @@ def _register_sandbox_routes(app: FastAPI) -> None:
         return {"sandbox_history": []}
 
 
+class _HealthCheckAccessFilter(logging.Filter):
+    """屏蔽 uvicorn access log 里前端探活的刷屏。
+
+    前端每隔几秒就 GET /api/health 一次，成功时日志全是
+    `127.0.0.1:xxxxx - "GET /api/health HTTP/1.1" 200 OK`，
+    把真正想看的请求日志全淹了。这里只屏蔽「探活且成功」的这一条：
+    非 200（还没就绪 / 报错）照常打印，那是要看的信号。
+
+    uvicorn 的调用形如（protocols/http/*_impl.py）：
+        access_logger.info('%s - "%s %s HTTP/%s" %d',
+                           client, method, path, http_version, status_code)
+    因此 args 是 5 元组。若将来格式变了，下面的守卫会整体放行 —— 宁可多打，不可误杀。
+    """
+
+    _PATH, _STATUS = 2, 4
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) != 5:
+            return True  # 不是 access log 的调用形状，别误伤
+        if str(args[self._PATH]).split("?", 1)[0] != "/api/health":
+            return True
+        return args[self._STATUS] != 200
+
+
+def _install_access_log_filter() -> None:
+    """给 uvicorn.access 挂上探活过滤（幂等）。
+
+    为什么放模块级而不是 lifespan 里：uvicorn 在 import app 之前就已经 dictConfig 过
+    logging（Config.__init__ 里 configure_logging() 先于 load()），此时挂上去不会被
+    随后的配置冲掉；--reload 下每个子进程都会重新 import 本模块，天然幂等。
+    """
+    access = logging.getLogger("uvicorn.access")
+    if any(isinstance(f, _HealthCheckAccessFilter) for f in access.filters):
+        return
+    access.addFilter(_HealthCheckAccessFilter())
+
+
 app = create_app()
+_install_access_log_filter()
