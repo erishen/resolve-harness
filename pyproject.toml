@@ -31,8 +31,3 @@ packages = ["src/resolve_harness"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-
-# PyPI mirror for China networks; remove these lines if you're outside China.
-[[tool.uv.index]]
-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
-default = true
