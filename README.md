@@ -37,6 +37,23 @@ uv run pytest                 # offline unit tests (memory / tools / loop / api 
 uv run python examples/tool_demo.py   # script demo: time / arithmetic / memory
 ```
 
+### Verifying the claims
+
+The resume's Resolve bullets map to reproducible checks in **this repo** (it is where the full Fast-path loop lives — resolve-studio is the TypeScript product surface over the same design):
+
+| Resume claim | How to check it | Where |
+|---|---|---|
+| **Fast path: deterministic tasks cost zero model calls** | `uv run pytest` → `tests/test_fastpath.py` — arithmetic / time / quotes / statistics / unit-convert / date-math / base-convert / text-stats detectors, each asserted without a model call | `src/resolve_harness/fastpath.py` |
+| **Miss → LLM writes a detector, validated by an AST whitelist, then persisted** | `uv run pytest` → `tests/test_codegen.py` — generated detectors are checked with `validate_ast` (no `__import__` / no dunder / no I/O), executed in a whitelisted-builtin sandbox, and rejected on malformed or malicious input | `src/resolve_harness/codegen.py` |
+| **Promoted detectors become committed source + hot-reload** | `tests/test_codegen.py` + `examples/tool_demo.py` — a well-behaved runtime plugin is merged into `generated_detectors.py` and reloaded by mtime without a restart | `src/resolve_harness/generated_detectors.py` |
+| **PSE three-role independent verification (Planner / Specialist / Evaluator / Reporter)** | `uv run pytest` → `tests/test_tasks.py` — role separation, replan-on-failure, and the evaluator holding no generator context | `src/resolve_harness/roles.py`, `tasks.py` |
+
+Run it (offline — no API key needed, the loop is driven by a FakeRouter):
+
+```bash
+uv run pytest
+```
+
 ### Web UI (Vite + React)
 
 One-command start of both frontend and backend (recommended):

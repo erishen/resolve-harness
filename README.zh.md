@@ -37,6 +37,23 @@ uv run pytest                 # 离线单元测试（memory / tools / loop / api
 uv run python examples/tool_demo.py   # 脚本演示：时间/计算/记忆
 ```
 
+### 核实这些主张
+
+简历里 Resolve 那几条，对应到**本仓**可复现的检查（完整 Fast-path 闭环在这个仓；resolve-studio 是同套设计的 TypeScript 产品面）：
+
+| 简历主张 | 怎么查 | 位置 |
+|---|---|---|
+| **Fast-path 确定性任务零模型调用** | `uv run pytest` → `tests/test_fastpath.py`——算术/时间/股指/统计/单位换算/日期/进制/文本统计各检测器，断言不触模型 | `src/resolve_harness/fastpath.py` |
+| **未命中 → LLM 写检测器，AST 白名单校验，再持久化** | `uv run pytest` → `tests/test_codegen.py`——生成的检测器过 `validate_ast`（禁 `__import__` / 禁 dunder / 禁 I/O），在受限 builtins 沙箱执行，恶意/坏代码直接拒绝 | `src/resolve_harness/codegen.py` |
+| **晋升检测器进源码 + 热重载** | `tests/test_codegen.py` + `examples/tool_demo.py`——行为良好的运行期插件合并进 `generated_detectors.py`，按 mtime 重载、无需重启 | `src/resolve_harness/generated_detectors.py` |
+| **PSE 三角色独立验证（Planner / Specialist / Evaluator / Reporter）** | `uv run pytest` → `tests/test_tasks.py`——角色分离、失败重规划、评估者不持有生成方上下文 | `src/resolve_harness/roles.py`、`tasks.py` |
+
+离线即可跑（不需要 API key，循环由 FakeRouter 驱动）：
+
+```bash
+uv run pytest
+```
+
 ### Web UI（Vite + React）
 
 一键启动前后端（推荐）：
